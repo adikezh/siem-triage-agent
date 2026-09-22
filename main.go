@@ -70,6 +70,8 @@ func main() {
 		run(os.Args[2:])
 	case "serve":
 		serve(os.Args[2:])
+	case "demo":
+		demoCommand(os.Args[2:])
 	case "report":
 		reportCommand(os.Args[2:])
 	case "feedback":
@@ -383,6 +385,10 @@ func serve(args []string) {
 			panic(err)
 		}
 	}
+	authHash := ""
+	if apiKey != "" {
+		authHash = auth.HashKey(apiKey)
+	}
 	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("content-type", "application/json")
 		fmt.Fprint(w, `{"status":"ok"}`)
@@ -403,7 +409,7 @@ func serve(args []string) {
 		w.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(w).Encode(records)
 	})
-	http.Handle("/api/incidents", auth.MiddlewareHash(incidentsHandler, auth.HashKey(apiKey)))
+	http.Handle("/api/incidents", auth.MiddlewareHash(incidentsHandler, authHash))
 	http.Handle("/api/incidents/", auth.MiddlewareHash(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(r.URL.Path, "/api/incidents/")
 		rec, e := db.GetIncident(r.Context(), id)
@@ -413,7 +419,7 @@ func serve(args []string) {
 		}
 		w.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(w).Encode(rec)
-	}), auth.HashKey(apiKey)))
+	}), authHash))
 	http.Handle("/api/stats", auth.MiddlewareHash(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rows, e := db.ListIncidents(r.Context())
 		if e != nil {
@@ -426,7 +432,7 @@ func serve(args []string) {
 		}
 		w.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"total": len(rows), "by_severity": counts})
-	}), auth.HashKey(apiKey)))
+	}), authHash))
 	http.Handle("/api/suppressions", auth.MiddlewareHash(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -464,7 +470,7 @@ func serve(args []string) {
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
-	}), auth.HashKey(apiKey)))
+	}), authHash))
 	http.Handle("/api/suppressions/", auth.MiddlewareHash(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -480,7 +486,7 @@ func serve(args []string) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
-	}), auth.HashKey(apiKey)))
+	}), authHash))
 	feedbackHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -507,7 +513,7 @@ func serve(args []string) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"status":"saved"}`))
 	})
-	http.Handle("/api/incidents/feedback", auth.MiddlewareHash(feedbackHandler, auth.HashKey(apiKey)))
+	http.Handle("/api/incidents/feedback", auth.MiddlewareHash(feedbackHandler, authHash))
 	fmt.Println("listening on", *addr)
 	if (*tlsCert == "") != (*tlsKey == "") {
 		panic("tls-cert and tls-key must be provided together")
@@ -523,7 +529,16 @@ func serve(args []string) {
 	}
 }
 func usage() {
-	fmt.Println("triage run --file alerts.ndjson [--out report.json]\ntriage rules test --file alerts.ndjson --config config.yaml\ntriage feedback export --db data/triage.db --out feedback.jsonl\ntriage eval --dataset feedback.jsonl\ntriage serve [--listen :8080]\ntriage report --db data/triage.db --period 7d --out weekly.md\ntriage version")
+	fmt.Println("triage run --file alerts.ndjson [--out report.json]\ntriage rules test --file alerts.ndjson --config config.yaml\ntriage feedback export --db data/triage.db --out feedback.jsonl\ntriage eval --dataset feedback.jsonl\ntriage demo [--listen :8080 --db data/triage.db]\ntriage serve [--listen :8080]\ntriage report --db data/triage.db --period 7d --out weekly.md\ntriage version")
+}
+
+func demoCommand(args []string) {
+	fs := flag.NewFlagSet("demo", flag.ExitOnError)
+	addr := fs.String("listen", ":8080", "address")
+	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
+	fs.Parse(args)
+	run([]string{"--file", "testdata/example.ndjson", "--db", *dbPath})
+	serve([]string{"--listen", *addr, "--db", *dbPath})
 }
 
 func evalCommand(args []string) {

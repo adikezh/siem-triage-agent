@@ -7,5 +7,6 @@ services:
     security_opt: ["no-new-privileges:true"]
     volumes:
       - triage-data:/app/data
+    command: ["demo", "--listen", ":8080", "--db", "/app/data/triage.db"]
 volumes:
   triage-data:
