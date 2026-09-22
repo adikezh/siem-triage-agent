@@ -71,13 +71,59 @@ func main() {
 		reportCommand(os.Args[2:])
 	case "rules":
 		if len(os.Args) > 2 && os.Args[2] == "test" {
-			run(os.Args[3:])
+			rulesTest(os.Args[3:])
 		} else {
 			usage()
 		}
 	default:
 		usage()
 	}
+}
+
+func rulesTest(args []string) {
+	fs := flag.NewFlagSet("rules test", flag.ExitOnError)
+	file := fs.String("file", "", "NDJSON input")
+	configPath := fs.String("config", "", "YAML configuration path")
+	fs.Parse(args)
+	if *file == "" {
+		fmt.Fprintln(os.Stderr, "--file is required")
+		os.Exit(2)
+	}
+	cfg, e := config.Load(*configPath)
+	if e != nil {
+		panic(e)
+	}
+	f, e := os.Open(*file)
+	if e != nil {
+		panic(e)
+	}
+	defer f.Close()
+	ss, e := rules.Load(cfg.Correlation.SuppressionsFile)
+	if e != nil {
+		panic(e)
+	}
+	s := bufio.NewScanner(f)
+	input, suppressed := 0, 0
+	for s.Scan() {
+		if strings.TrimSpace(s.Text()) == "" {
+			continue
+		}
+		input++
+		var a Alert
+		if e = json.Unmarshal([]byte(s.Text()), &a); e != nil {
+			panic(e)
+		}
+		agentID, _ := a.Agent["id"].(string)
+		d := rules.Evaluate(rules.Alert{RuleID: a.RuleID, RuleDesc: a.RuleDesc, SrcIP: a.SrcIP, Groups: a.Groups, AgentID: agentID}, ss, time.Now().UTC())
+		if d.Suppressed {
+			suppressed++
+		}
+	}
+	if e = s.Err(); e != nil {
+		panic(e)
+	}
+	b, _ := json.MarshalIndent(map[string]int{"input": input, "suppressed": suppressed, "accepted": input - suppressed}, "", "  ")
+	fmt.Println(string(b))
 }
 func run(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
