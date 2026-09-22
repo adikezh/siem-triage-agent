@@ -108,3 +108,32 @@ func AlertFromHit(h Hit) map[string]any {
 	}
 	return a
 }
+
+func NormalizeHit(h Hit) map[string]any {
+	out := AlertFromHit(h)
+	if rule, ok := h.Source["rule"].(map[string]any); ok {
+		if id, ok := rule["id"]; ok {
+			out["rule_id"] = id
+		}
+		if l, ok := rule["level"]; ok {
+			out["rule_level"] = l
+		}
+		if d, ok := rule["description"]; ok {
+			out["rule_description"] = d
+		}
+		if g, ok := rule["groups"]; ok {
+			out["groups"] = g
+		}
+	}
+	if agent, ok := h.Source["agent"].(map[string]any); ok {
+		out["agent"] = agent
+	}
+	if data, ok := h.Source["data"].(map[string]any); ok {
+		for _, k := range []string{"srcip", "dstip", "src_ip", "dst_ip", "user", "process"} {
+			if v, ok := data[k]; ok {
+				out[k] = v
+			}
+		}
+	}
+	return out
+}
