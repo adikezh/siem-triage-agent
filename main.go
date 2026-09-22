@@ -817,8 +817,22 @@ func serve(args []string) {
 			http.Error(w, "could not save feedback", http.StatusInternalServerError)
 			return
 		}
+		response := map[string]any{"status": "saved"}
+		if input.Verdict == "fp" {
+			if incident, incidentErr := db.GetIncident(r.Context(), input.IncidentID); incidentErr == nil {
+				if count, countErr := db.FalsePositiveCount(r.Context(), incident.Fingerprint); countErr == nil && count >= 3 {
+					response["suppression_suggestion"] = map[string]any{
+						"match":      map[string]string{"fingerprint": incident.Fingerprint},
+						"action":     "drop",
+						"reason":     fmt.Sprintf("fingerprint received %d false-positive verdicts", count),
+						"created_by": input.Actor,
+					}
+				}
+			}
+		}
+		w.Header().Set("content-type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		_, _ = w.Write([]byte(`{"status":"saved"}`))
+		_ = json.NewEncoder(w).Encode(response)
 	})
 	http.Handle("/api/incidents/feedback", protectRoles(feedbackHandler, "analyst", "admin"))
 	http.Handle("/api/integrations/telegram/callback", callbackAuth(webhookHandler(db, "telegram"), webhookSecret))
