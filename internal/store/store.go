@@ -15,6 +15,11 @@ import (
 
 type Store struct{ db *sql.DB }
 
+type AuditRecord struct {
+	ID                                               int64 `json:"id"`
+	Event, Actor, Payload, PrevHash, Hash, CreatedAt string
+}
+
 type Record struct {
 	ID, Fingerprint, FirstSeen, LastSeen, Severity string
 	AlertCount, Score                              int
@@ -80,7 +85,8 @@ func (s *Store) migrate() error {
 	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS alerts (id TEXT PRIMARY KEY, source TEXT NOT NULL, timestamp TEXT NOT NULL, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS incidents (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, alert_count INTEGER NOT NULL, score INTEGER NOT NULL, severity TEXT NOT NULL, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS feedback (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id TEXT NOT NULL REFERENCES incidents(id), verdict TEXT NOT NULL CHECK(verdict IN ('tp','fp','ack')), comment TEXT NOT NULL DEFAULT '', actor TEXT NOT NULL, created_at TEXT NOT NULL);
-	CREATE TABLE IF NOT EXISTS suppressions (id INTEGER PRIMARY KEY AUTOINCREMENT, fingerprint TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('drop','downgrade','tag')), reason TEXT NOT NULL, expires_at TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL);`)
+CREATE TABLE IF NOT EXISTS suppressions (id INTEGER PRIMARY KEY AUTOINCREMENT, fingerprint TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('drop','downgrade','tag')), reason TEXT NOT NULL, expires_at TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL);`)
+	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, event TEXT NOT NULL, actor TEXT NOT NULL, payload TEXT NOT NULL, prev_hash TEXT NOT NULL, hash TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL)`)
 	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS llm_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, prompt_hash TEXT NOT NULL, latency_ms INTEGER NOT NULL, used INTEGER NOT NULL, error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`)
 	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS source_cursors (source TEXT PRIMARY KEY, timestamp TEXT NOT NULL, sort_json BLOB NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id TEXT NOT NULL, channel TEXT NOT NULL, payload BLOB NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT NOT NULL, last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, UNIQUE(incident_id,channel));`)
@@ -261,8 +267,12 @@ func (s *Store) AddFeedback(ctx context.Context, incidentID, verdict, comment, a
 	if actor == "" {
 		actor = "anonymous"
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO feedback(incident_id,verdict,comment,actor,created_at) VALUES(?,?,?,?,?)`, incidentID, verdict, comment, actor, time.Now().UTC().Format(time.RFC3339Nano))
-	return err
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO feedback(incident_id,verdict,comment,actor,created_at) VALUES(?,?,?,?,?)`, incidentID, verdict, comment, actor, now)
+	if err != nil {
+		return err
+	}
+	return s.appendAudit(ctx, "feedback.added", actor, map[string]string{"incident_id": incidentID, "verdict": verdict, "comment": comment})
 }
 
 func (s *Store) CreateSuppression(ctx context.Context, fingerprint, action, reason, expiresAt, createdBy string) (SuppressionRecord, error) {
@@ -276,6 +286,9 @@ func (s *Store) CreateSuppression(ctx context.Context, fingerprint, action, reas
 	}
 	id, err := r.LastInsertId()
 	if err != nil {
+		return SuppressionRecord{}, err
+	}
+	if err = s.appendAudit(ctx, "suppression.created", createdBy, SuppressionRecord{ID: id, Fingerprint: fingerprint, Action: action, Reason: reason, ExpiresAt: expiresAt, CreatedBy: createdBy, CreatedAt: now}); err != nil {
 		return SuppressionRecord{}, err
 	}
 	return SuppressionRecord{ID: id, Fingerprint: fingerprint, Action: action, Reason: reason, ExpiresAt: expiresAt, CreatedBy: createdBy, CreatedAt: now}, nil
@@ -300,7 +313,53 @@ func (s *Store) ListSuppressions(ctx context.Context) ([]SuppressionRecord, erro
 
 func (s *Store) DeleteSuppression(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM suppressions WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	return s.appendAudit(ctx, "suppression.deleted", "api", map[string]any{"id": id})
+}
+
+func (s *Store) appendAudit(ctx context.Context, event, actor string, payload any) error {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	var prev string
+	if err = s.db.QueryRowContext(ctx, `SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1`).Scan(&prev); err == sql.ErrNoRows {
+		err = nil
+	}
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	sum := sha256.Sum256([]byte(prev + "\n" + event + "\n" + actor + "\n" + string(b) + "\n" + now))
+	hash := hex.EncodeToString(sum[:])
+	_, err = s.db.ExecContext(ctx, `INSERT INTO audit_log(event,actor,payload,prev_hash,hash,created_at) VALUES(?,?,?,?,?,?)`, event, actor, string(b), prev, hash, now)
 	return err
+}
+
+func (s *Store) VerifyAuditChain(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT event,actor,payload,prev_hash,hash,created_at FROM audit_log ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	prev := ""
+	for rows.Next() {
+		var event, actor, payload, storedPrev, storedHash, createdAt string
+		if err = rows.Scan(&event, &actor, &payload, &storedPrev, &storedHash, &createdAt); err != nil {
+			return err
+		}
+		if storedPrev != prev {
+			return fmt.Errorf("audit chain broken: previous hash mismatch")
+		}
+		sum := sha256.Sum256([]byte(prev + "\n" + event + "\n" + actor + "\n" + payload + "\n" + createdAt))
+		if hex.EncodeToString(sum[:]) != storedHash {
+			return fmt.Errorf("audit chain broken: hash mismatch")
+		}
+		prev = storedHash
+	}
+	return rows.Err()
 }
 
 func nullableText(v string) any {

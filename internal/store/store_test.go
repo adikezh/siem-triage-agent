@@ -52,6 +52,9 @@ func TestSQLitePersistenceAndFeedback(t *testing.T) {
 	if rows, e := s.ListFeedback(context.Background()); e != nil || len(rows) != 1 || rows[0].Verdict != "fp" {
 		t.Fatalf("feedback=%#v %v", rows, e)
 	}
+	if e = s.VerifyAuditChain(context.Background()); e != nil {
+		t.Fatal(e)
+	}
 }
 
 func TestSuppressionCRUD(t *testing.T) {
@@ -74,6 +77,9 @@ func TestSuppressionCRUD(t *testing.T) {
 	rows, err = s.ListSuppressions(context.Background())
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("rows after delete=%#v err=%v", rows, err)
+	}
+	if err = s.VerifyAuditChain(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }
 
