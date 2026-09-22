@@ -35,3 +35,18 @@ func TestWazuhSearchAfterAndCursor(t *testing.T) {
 		t.Fatal("expected two polls")
 	}
 }
+
+func TestNormalizeHitMapsWazuhDataFields(t *testing.T) {
+	h := Hit{ID: "x", Timestamp: time.Now(), Source: map[string]any{
+		"rule":  map[string]any{"id": "100", "level": 8, "groups": []any{"authentication_failed"}},
+		"agent": map[string]any{"id": "a1"},
+		"data":  map[string]any{"srcip": "203.0.113.8", "dstip": "10.0.0.2"},
+	}}
+	got := NormalizeHit(h)
+	if got["src_ip"] != "203.0.113.8" || got["dst_ip"] != "10.0.0.2" {
+		t.Fatalf("normalized data=%#v", got)
+	}
+	if _, ok := got["srcip"]; ok {
+		t.Fatalf("legacy srcip key leaked into normalized model: %#v", got)
+	}
+}

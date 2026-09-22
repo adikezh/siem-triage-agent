@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/adikezh/siem-triage-agent/internal/config"
+	"github.com/adikezh/siem-triage-agent/internal/enrich"
 	"github.com/adikezh/siem-triage-agent/internal/ingest"
 	"github.com/adikezh/siem-triage-agent/internal/store"
 	"net/http"
@@ -102,17 +103,18 @@ func TestPollWazuhPersistsAlertAndIncident(t *testing.T) {
 	defer db.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go pollWazuh(ctx, db, ingest.WazuhClient{BaseURL: srv.URL, Index: "alerts-*"}, time.Hour, 15*time.Minute, 6*time.Hour, config.Grouping{Default: []string{"rule.id", "agent.id", "src_ip"}}, nil, "")
+	go pollWazuh(ctx, db, ingest.WazuhClient{BaseURL: srv.URL, Index: "alerts-*"}, time.Hour, 15*time.Minute, 6*time.Hour, config.Grouping{Default: []string{"rule.id", "agent.id", "src_ip"}}, map[string]enrich.Asset{"203.0.113.8": {IP: "203.0.113.8", Criticality: 5}}, enrich.IOC{IPs: map[string]bool{"203.0.113.8": true}}, nil, "")
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		rows, e := db.ListIncidents(ctx)
-		if e == nil && len(rows) == 1 {
+		if e == nil && len(rows) == 1 && rows[0].Score == 80 && rows[0].Severity == "critical" {
 			cancel()
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("poller did not persist incident")
+	rows, _ := db.ListIncidents(ctx)
+	t.Fatalf("poller did not persist expected incident: %#v", rows)
 }
 
 func TestScenarioFixtures(t *testing.T) {

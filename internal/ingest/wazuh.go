@@ -129,9 +129,11 @@ func NormalizeHit(h Hit) map[string]any {
 		out["agent"] = agent
 	}
 	if data, ok := h.Source["data"].(map[string]any); ok {
-		for _, k := range []string{"srcip", "dstip", "src_ip", "dst_ip", "user", "process"} {
-			if v, ok := data[k]; ok {
-				out[k] = v
+		for _, field := range []struct{ from, to string }{
+			{"srcip", "src_ip"}, {"dstip", "dst_ip"}, {"src_ip", "src_ip"}, {"dst_ip", "dst_ip"}, {"user", "user"}, {"process", "process"},
+		} {
+			if v, ok := data[field.from]; ok {
+				out[field.to] = v
 			}
 		}
 	}

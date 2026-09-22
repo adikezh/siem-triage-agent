@@ -536,6 +536,10 @@ func serve(args []string) {
 			panic(err)
 		}
 	}
+	iocs, err := enrich.LoadIOC(cfg.Enrichment.IOCFile)
+	if err != nil {
+		panic(err)
+	}
 	apiKey := ""
 	if *apiKeyEnv != "" {
 		apiKey, err = auth.RequireKey(os.Getenv(*apiKeyEnv))
@@ -765,7 +769,7 @@ func serve(args []string) {
 		if *webhookURL != "" {
 			sender = notify.Webhook{URL: *webhookURL, Secret: webhookSecret}
 		}
-		go pollWazuh(context.Background(), db, ingest.WazuhClient{BaseURL: *sourceURL, Index: *sourceIndex, Username: *sourceUser, Password: password}, *sourceInterval, cfg.Correlation.Window, cfg.Correlation.MaxIncidentAge, cfg.Correlation.Grouping, sender, cfg.Correlation.SuppressionsFile)
+		go pollWazuh(context.Background(), db, ingest.WazuhClient{BaseURL: *sourceURL, Index: *sourceIndex, Username: *sourceUser, Password: password}, *sourceInterval, cfg.Correlation.Window, cfg.Correlation.MaxIncidentAge, cfg.Correlation.Grouping, assets, iocs, sender, cfg.Correlation.SuppressionsFile)
 	}
 	fmt.Println("listening on", *addr)
 	if (*tlsCert == "") != (*tlsKey == "") {
@@ -782,7 +786,7 @@ func serve(args []string) {
 	}
 }
 
-func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, interval, correlationWindow, maxIncidentAge time.Duration, grouping config.Grouping, sender pipeline.Sender, suppressionFile string) {
+func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, interval, correlationWindow, maxIncidentAge time.Duration, grouping config.Grouping, assets map[string]enrich.Asset, iocs enrich.IOC, sender pipeline.Sender, suppressionFile string) {
 	const sourceName = "wazuh-live"
 	saved, err := db.LoadCursor(ctx, sourceName)
 	if err != nil {
@@ -819,13 +823,22 @@ func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, 
 				adjusted, _ := json.Marshal(alert)
 				_ = json.Unmarshal(adjusted, &payload)
 			}
-			if err := db.SaveAlert(ctx, hit.ID, "wazuh", hit.Timestamp, payload); err != nil {
-				fmt.Fprintln(os.Stderr, "save alert:", err)
-				return
-			}
 			encoded, _ = json.Marshal(payload)
 			if err := json.Unmarshal(encoded, &alert); err == nil {
+				if asset, ok := enrich.Apply(assets, alert.SrcIP); ok {
+					alert.Criticality = asset.Criticality
+				}
+				alert.Malicious = iocs.MaliciousIP(alert.SrcIP)
+				adjusted, _ := json.Marshal(alert)
+				_ = json.Unmarshal(adjusted, &payload)
+				if err := db.SaveAlert(ctx, hit.ID, "wazuh", hit.Timestamp, payload); err != nil {
+					fmt.Fprintln(os.Stderr, "save alert:", err)
+					return
+				}
 				accepted = append(accepted, alert)
+			} else if err := db.SaveAlert(ctx, hit.ID, "wazuh", hit.Timestamp, payload); err != nil {
+				fmt.Fprintln(os.Stderr, "save alert:", err)
+				return
 			}
 		}
 		for _, incident := range groupWithWindowConfig(accepted, correlationWindow, maxIncidentAge, grouping) {
