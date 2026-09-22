@@ -721,7 +721,7 @@ func serve(args []string) {
 		if *webhookURL != "" {
 			sender = notify.Webhook{URL: *webhookURL, Secret: webhookSecret}
 		}
-		go pollWazuh(context.Background(), db, ingest.WazuhClient{BaseURL: *sourceURL, Index: *sourceIndex, Username: *sourceUser, Password: password}, *sourceInterval, sender)
+		go pollWazuh(context.Background(), db, ingest.WazuhClient{BaseURL: *sourceURL, Index: *sourceIndex, Username: *sourceUser, Password: password}, *sourceInterval, sender, cfg.Correlation.SuppressionsFile)
 	}
 	fmt.Println("listening on", *addr)
 	if (*tlsCert == "") != (*tlsKey == "") {
@@ -738,7 +738,7 @@ func serve(args []string) {
 	}
 }
 
-func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, interval time.Duration, sender pipeline.Sender) {
+func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, interval time.Duration, sender pipeline.Sender, suppressionFile string) {
 	const sourceName = "wazuh-live"
 	saved, err := db.LoadCursor(ctx, sourceName)
 	if err != nil {
@@ -755,14 +755,30 @@ func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, 
 			fmt.Fprintln(os.Stderr, "source poll:", err)
 			return
 		}
+		suppressions, _ := liveSuppressions(ctx, db, suppressionFile)
 		for _, hit := range hits {
 			payload := ingest.NormalizeHit(hit)
+			var alert Alert
+			encoded, _ := json.Marshal(payload)
+			if err := json.Unmarshal(encoded, &alert); err == nil {
+				agentID, _ := alert.Agent["id"].(string)
+				fingerprint := alert.RuleID + "|" + agentID + "|" + alert.SrcIP
+				decision := rules.Evaluate(rules.Alert{RuleID: alert.RuleID, RuleDesc: alert.RuleDesc, SrcIP: alert.SrcIP, Groups: alert.Groups, AgentID: agentID, Fingerprint: fingerprint}, suppressions, time.Now().UTC())
+				if decision.Suppressed {
+					continue
+				}
+				if decision.Downgrade && alert.RuleLevel > 3 {
+					alert.RuleLevel = 3
+				}
+				alert.Tag = decision.Tag
+				adjusted, _ := json.Marshal(alert)
+				_ = json.Unmarshal(adjusted, &payload)
+			}
 			if err := db.SaveAlert(ctx, hit.ID, "wazuh", hit.Timestamp, payload); err != nil {
 				fmt.Fprintln(os.Stderr, "save alert:", err)
 				return
 			}
-			var alert Alert
-			encoded, _ := json.Marshal(payload)
+			encoded, _ = json.Marshal(payload)
 			if err := json.Unmarshal(encoded, &alert); err == nil {
 				incidents := groupWithWindow([]Alert{alert}, 15*time.Minute, 6*time.Hour)
 				for _, incident := range incidents {
@@ -799,6 +815,32 @@ func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, 
 			poll()
 		}
 	}
+}
+
+func liveSuppressions(ctx context.Context, db *store.Store, path string) ([]rules.Suppression, error) {
+	var out []rules.Suppression
+	if path != "" {
+		loaded, err := rules.Load(path)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, loaded...)
+	}
+	rows, err := db.ListSuppressions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		var expires *time.Time
+		if row.ExpiresAt != "" {
+			t, parseErr := time.Parse(time.RFC3339Nano, row.ExpiresAt)
+			if parseErr == nil {
+				expires = &t
+			}
+		}
+		out = append(out, rules.Suppression{Match: rules.Match{Fingerprint: row.Fingerprint}, Action: row.Action, Reason: row.Reason, CreatedBy: row.CreatedBy, ExpiresAt: expires})
+	}
+	return out, nil
 }
 
 func callbackAuth(next http.Handler, secret string) http.Handler {
