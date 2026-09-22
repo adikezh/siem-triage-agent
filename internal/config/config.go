@@ -20,6 +20,7 @@ type Config struct {
 	Enrichment struct {
 		AssetsFile string `yaml:"assets_file"`
 		IOCFile    string `yaml:"ioc_file"`
+		GeoIPFile  string `yaml:"geoip_file"`
 		AbuseIPDB  struct {
 			BaseURL   string `yaml:"base_url"`
 			APIKeyEnv string `yaml:"api_key_env"`

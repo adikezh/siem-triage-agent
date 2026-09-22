@@ -198,6 +198,11 @@ func run(args []string) {
 		threat = append(threat, enrich.VirusTotal{BaseURL: cfg.Enrichment.VirusTotal.BaseURL, APIKey: key})
 	}
 	threatCache := enrich.NewThreatCache(24 * time.Hour)
+	geoip, geoErr := enrich.OpenGeoIP(cfg.Enrichment.GeoIPFile)
+	if geoErr != nil {
+		panic(geoErr)
+	}
+	defer geoip.Close()
 	var suppressions []rules.Suppression
 	if cfg.Correlation.SuppressionsFile != "" {
 		suppressions, err = rules.Load(cfg.Correlation.SuppressionsFile)
@@ -310,7 +315,13 @@ func run(args []string) {
 			if len(parts) >= 3 {
 				sourceIP = parts[2]
 			}
-			tr := engine.Analyze(context.Background(), triageengine.Case{Rule: scoring.Input{RuleLevel: i.RuleLevel, Malicious: i.Malicious, Criticality: i.Criticality, HighImpactTactic: i.HighImpactTactic, InternalWhitelist: i.Internal}, RuleSeverity: i.Severity, Prompt: llm.PromptInput{Rule: i.Fingerprint, Description: "correlated SIEM incident", SourceIP: sourceIP, History: strings.Join(historyParts, "; ")}})
+			geo := ""
+			if geoip != nil {
+				if country, geoLookupErr := geoip.Lookup(sourceIP); geoLookupErr == nil {
+					geo = country
+				}
+			}
+			tr := engine.Analyze(context.Background(), triageengine.Case{Rule: scoring.Input{RuleLevel: i.RuleLevel, Malicious: i.Malicious, Criticality: i.Criticality, HighImpactTactic: i.HighImpactTactic, InternalWhitelist: i.Internal}, RuleSeverity: i.Severity, Prompt: llm.PromptInput{Rule: i.Fingerprint, Description: "correlated SIEM incident", SourceIP: sourceIP, Geo: geo, History: strings.Join(historyParts, "; ")}})
 			i.Score = tr.Score
 			i.Severity = tr.Severity
 			_ = db.SaveLLMTrace(context.Background(), store.LLMTrace{IncidentID: i.Fingerprint, Provider: tr.Trace.Provider, Model: tr.Trace.Model, PromptHash: tr.Trace.PromptHash, LatencyMS: tr.Trace.LatencyMS, Used: tr.Trace.Used, Error: tr.Trace.Error})
