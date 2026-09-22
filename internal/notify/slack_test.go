@@ -15,13 +15,14 @@ func TestSlackSenderBlockKit(t *testing.T) {
 		if e := json.NewDecoder(r.Body).Decode(&v); e != nil {
 			t.Fatal(e)
 		}
-		if _, ok := v["blocks"]; !ok {
+		blocks, ok := v["blocks"].([]any)
+		if !ok || len(blocks) < 2 {
 			t.Fatal("blocks missing")
 		}
 		w.WriteHeader(200)
 	}))
 	defer srv.Close()
-	if e := (Slack{URL: srv.URL}).Send(context.Background(), store.OutboxItem{Payload: []byte("incident")}); e != nil {
+	if e := (Slack{URL: srv.URL}).Send(context.Background(), store.OutboxItem{IncidentID: "inc-1", Payload: []byte("incident")}); e != nil {
 		t.Fatal(e)
 	}
 }

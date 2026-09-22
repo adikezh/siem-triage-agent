@@ -23,7 +23,7 @@ func (t Telegram) Send(ctx context.Context, item store.OutboxItem) error {
 	if c == nil {
 		c = &http.Client{Timeout: 10 * time.Second}
 	}
-	body := map[string]any{"chat_id": t.ChatID, "text": string(item.Payload), "parse_mode": "HTML"}
+	body := map[string]any{"chat_id": t.ChatID, "text": string(item.Payload), "parse_mode": "HTML", "reply_markup": map[string]any{"inline_keyboard": [][]map[string]string{{{"text": "✅ TP", "callback_data": "tp|" + item.IncidentID}, {"text": "❌ FP", "callback_data": "fp|" + item.IncidentID}}, {{"text": "👁 Ack", "callback_data": "ack|" + item.IncidentID}, {"text": "🔗 Open", "callback_data": "open|" + item.IncidentID}}}}}
 	b, _ := json.Marshal(body)
 	u := t.BaseURL
 	if u == "" {

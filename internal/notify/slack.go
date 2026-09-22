@@ -23,7 +23,16 @@ func (s Slack) Send(ctx context.Context, item store.OutboxItem) error {
 	if c == nil {
 		c = &http.Client{Timeout: 10 * time.Second}
 	}
-	body := map[string]any{"text": string(item.Payload), "blocks": []map[string]any{{"type": "section", "text": map[string]string{"type": "mrkdwn", "text": string(item.Payload)}}}}
+	elements := []map[string]any{
+		{"type": "button", "text": map[string]string{"type": "plain_text", "text": "✅ TP"}, "action_id": "tp", "value": item.IncidentID},
+		{"type": "button", "text": map[string]string{"type": "plain_text", "text": "❌ FP"}, "action_id": "fp", "value": item.IncidentID},
+		{"type": "button", "text": map[string]string{"type": "plain_text", "text": "👁 Ack"}, "action_id": "ack", "value": item.IncidentID},
+		{"type": "button", "text": map[string]string{"type": "plain_text", "text": "🔗 Open"}, "action_id": "open", "value": item.IncidentID},
+	}
+	body := map[string]any{"text": string(item.Payload), "blocks": []map[string]any{
+		{"type": "section", "text": map[string]string{"type": "mrkdwn", "text": string(item.Payload)}},
+		{"type": "actions", "elements": elements},
+	}}
 	b, _ := json.Marshal(body)
 	req, e := http.NewRequestWithContext(ctx, http.MethodPost, s.URL, bytes.NewReader(b))
 	if e != nil {
