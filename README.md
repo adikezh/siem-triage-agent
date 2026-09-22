@@ -8,6 +8,8 @@ Quick start:
     go test ./...
     docker compose up --build
     go run . report --db data/triage.db --period 7d --format md --out weekly.md
+    go run . report --db data/triage.db --period 7d --format pdf --out weekly.pdf
+    go run . report --db data/triage.db --period 7d --format docx --out weekly.docx
     go run . rules test --file testdata/example.ndjson --config config.yaml
     go run . feedback export --db data/triage.db --out feedback.jsonl
     go run . apikey create --db data/triage.db --name soc-bot --role analyst

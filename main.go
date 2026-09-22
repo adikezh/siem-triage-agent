@@ -906,10 +906,10 @@ func reportCommand(args []string) {
 	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
 	period := fs.String("period", "7d", "period: 24h, 7d, 30d")
 	out := fs.String("out", "", "output markdown path")
-	format := fs.String("format", "md", "format (md only)")
+	format := fs.String("format", "md", "format: md, pdf or docx")
 	fs.Parse(args)
-	if *format != "md" {
-		fmt.Fprintln(os.Stderr, "only --format md is currently supported")
+	if *format != "md" && *format != "pdf" && *format != "docx" {
+		fmt.Fprintln(os.Stderr, "format must be md, pdf or docx")
 		os.Exit(2)
 	}
 	d, e := time.ParseDuration(*period)
@@ -929,15 +929,32 @@ func reportCommand(args []string) {
 		panic(e)
 	}
 	defer db.Close()
-	text, e := report.Markdown(context.Background(), db, d)
+	var data []byte
+	if *format == "md" {
+		text, err := report.Markdown(context.Background(), db, d)
+		if err != nil {
+			panic(err)
+		}
+		data = []byte(text)
+	}
+	if *format == "pdf" {
+		data, e = report.PDF(context.Background(), db, d)
+	}
+	if *format == "docx" {
+		data, e = report.DOCX(context.Background(), db, d)
+	}
 	if e != nil {
 		panic(e)
 	}
 	if *out != "" {
-		if e = os.WriteFile(*out, []byte(text), 0600); e != nil {
+		if e = os.WriteFile(*out, data, 0600); e != nil {
 			panic(e)
 		}
 	} else {
-		fmt.Print(text)
+		if *format == "md" {
+			fmt.Print(string(data))
+		} else {
+			_, _ = os.Stdout.Write(data)
+		}
 	}
 }
