@@ -610,6 +610,11 @@ func serve(args []string) {
 	if err != nil {
 		panic(err)
 	}
+	geoip, err := enrich.OpenGeoIP(cfg.Enrichment.GeoIPFile)
+	if err != nil {
+		panic(err)
+	}
+	defer geoip.Close()
 	apiKey := ""
 	if *apiKeyEnv != "" {
 		apiKey, err = auth.RequireKey(os.Getenv(*apiKeyEnv))
@@ -880,7 +885,7 @@ func serve(args []string) {
 		if *webhookURL != "" {
 			sender = notify.Webhook{URL: *webhookURL, Secret: webhookSecret}
 		}
-		go pollWazuh(serveCtx, db, ingest.WazuhClient{BaseURL: *sourceURL, Index: *sourceIndex, Username: *sourceUser, Password: password}, *sourceInterval, cfg.Correlation.Window, cfg.Correlation.MaxIncidentAge, cfg.Correlation.Grouping, cfg.Enrichment.InternalCIDRs, assets, iocs, engine, sender, cfg.Correlation.SuppressionsFile)
+		go pollWazuh(serveCtx, db, ingest.WazuhClient{BaseURL: *sourceURL, Index: *sourceIndex, Username: *sourceUser, Password: password}, *sourceInterval, cfg.Correlation.Window, cfg.Correlation.MaxIncidentAge, cfg.Correlation.Grouping, cfg.Enrichment.InternalCIDRs, assets, iocs, geoip, engine, sender, cfg.Correlation.SuppressionsFile)
 	}
 	fmt.Println("listening on", *addr)
 	if (*tlsCert == "") != (*tlsKey == "") {
@@ -933,7 +938,7 @@ func configuredEngine(cfg config.Config) *triageengine.Engine {
 	return &triageengine.Engine{Threshold: cfg.Triage.LLMThreshold, Provider: llm.ChainProvider{Chain: llm.Chain{Providers: providers, Budget: budget}}, Model: model, InternalCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"}}
 }
 
-func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, interval, correlationWindow, maxIncidentAge time.Duration, grouping config.Grouping, internalCIDRs []string, assets map[string]enrich.Asset, iocs enrich.IOC, engine *triageengine.Engine, sender pipeline.Sender, suppressionFile string) {
+func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, interval, correlationWindow, maxIncidentAge time.Duration, grouping config.Grouping, internalCIDRs []string, assets map[string]enrich.Asset, iocs enrich.IOC, geoip *enrich.GeoIP, engine *triageengine.Engine, sender pipeline.Sender, suppressionFile string) {
 	const sourceName = "wazuh-live"
 	saved, err := db.LoadCursor(ctx, sourceName)
 	if err != nil {
@@ -1019,10 +1024,16 @@ func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, 
 				if len(parts) > 0 {
 					sourceIP = parts[len(parts)-1]
 				}
+				geo := ""
+				if geoip != nil {
+					if country, geoErr := geoip.Lookup(sourceIP); geoErr == nil {
+						geo = country
+					}
+				}
 				result := engine.Analyze(ctx, triageengine.Case{
 					Rule:         scoring.Input{RuleLevel: incident.RuleLevel, Malicious: incident.Malicious, Criticality: incident.Criticality, HighImpactTactic: incident.HighImpactTactic, InternalWhitelist: incident.Internal},
 					RuleSeverity: incident.Severity,
-					Prompt:       llm.PromptInput{Rule: incident.Fingerprint, Description: "live correlated SIEM incident", SourceIP: sourceIP, History: strings.Join(historyParts, "; ")},
+					Prompt:       llm.PromptInput{Rule: incident.Fingerprint, Description: "live correlated SIEM incident", SourceIP: sourceIP, Geo: geo, History: strings.Join(historyParts, "; ")},
 				})
 				incident.Score = result.Score
 				incident.Severity = result.Severity
