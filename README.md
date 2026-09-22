@@ -46,6 +46,8 @@ LLM is opt-in. For an OpenAI-compatible endpoint set `--llm-url` and `--llm-mode
 
 `docker compose up --build` starts the self-contained demo: it loads `testdata/example.ndjson` into the named SQLite volume and then serves the dashboard/API on port 8080. To reset demo data, run `docker compose down -v`.
 
+The repeatable PowerShell smoke check is `./scripts/compose-smoke.ps1`; it builds the image, verifies `/health`, `/stats`, and that demo incidents were loaded, then removes the temporary container, network, and volume.
+
 For a repeatable local performance check, run `task benchmark` (or the equivalent `go test -run '^$' -bench '^BenchmarkGroup100k$' -benchtime=1x -count=1`). The benchmark processes 100,000 alerts through sorting and correlation; record the host and result when evaluating the 500-alerts/second production target.
 
 If host port 8080 is occupied, use `TRIAGE_PORT=18080 docker compose up --build` (PowerShell: `$env:TRIAGE_PORT=18080; docker compose up --build`).
