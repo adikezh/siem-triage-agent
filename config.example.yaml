@@ -11,3 +11,4 @@ triage:
   mode: rule-only
 enrichment:
   assets_file: configs/assets.example.yaml
+  ioc_file: configs/ioc.example.yaml

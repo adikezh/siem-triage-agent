@@ -1,0 +1,3 @@
+malicious_ips:
+  - "203.0.113.5"
+malicious_hashes: []

@@ -105,6 +105,10 @@ func run(args []string) {
 	if e != nil {
 		panic(e)
 	}
+	iocs, e := enrich.LoadIOC(cfg.Enrichment.IOCFile)
+	if e != nil {
+		panic(e)
+	}
 	var suppressions []rules.Suppression
 	if cfg.Correlation.SuppressionsFile != "" {
 		suppressions, err = rules.Load(cfg.Correlation.SuppressionsFile)
@@ -138,6 +142,9 @@ func run(args []string) {
 		}
 		if asset, ok := enrich.Apply(assets, a.SrcIP); ok {
 			a.Criticality = asset.Criticality
+		}
+		if iocs.MaliciousIP(a.SrcIP) {
+			a.Malicious = true
 		}
 		alerts = append(alerts, a)
 	}

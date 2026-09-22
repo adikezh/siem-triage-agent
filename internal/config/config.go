@@ -19,6 +19,7 @@ type Config struct {
 	} `yaml:"correlation"`
 	Enrichment struct {
 		AssetsFile string `yaml:"assets_file"`
+		IOCFile    string `yaml:"ioc_file"`
 	} `yaml:"enrichment"`
 	Triage struct {
 		LLMThreshold int    `yaml:"llm_threshold"`
