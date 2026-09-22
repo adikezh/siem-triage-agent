@@ -389,13 +389,7 @@ func run(args []string) {
 	}
 }
 func sortAlerts(a []Alert) {
-	for i := range a {
-		for j := i + 1; j < len(a); j++ {
-			if a[j].Timestamp.Before(a[i].Timestamp) {
-				a[i], a[j] = a[j], a[i]
-			}
-		}
-	}
+	sort.SliceStable(a, func(i, j int) bool { return a[i].Timestamp.Before(a[j].Timestamp) })
 }
 func group(as []Alert) []Incident {
 	return groupWithWindow(as, 15*time.Minute, 6*time.Hour)

@@ -33,6 +33,20 @@ func TestGroupWindow(t *testing.T) {
 	}
 }
 
+func BenchmarkGroup100k(b *testing.B) {
+	alerts := make([]Alert, 100000)
+	base := time.Date(2026, 9, 23, 8, 0, 0, 0, time.UTC)
+	for i := range alerts {
+		alerts[i] = Alert{Timestamp: base.Add(time.Duration(i%1000) * time.Second), RuleID: "r", RuleLevel: 5, Agent: map[string]any{"id": "a"}, SrcIP: "203.0.113.8"}
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		copy := append([]Alert(nil), alerts...)
+		sortAlerts(copy)
+		_ = groupWithWindow(copy, 15*time.Minute, 6*time.Hour)
+	}
+}
+
 func TestGroupingOverride(t *testing.T) {
 	b := time.Now().UTC()
 	a := []Alert{
