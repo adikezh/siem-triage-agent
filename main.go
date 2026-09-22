@@ -162,6 +162,14 @@ func run(args []string) {
 		panic(e)
 	}
 	defer f.Close()
+	if err := os.MkdirAll(filepath.Dir(*dbPath), 0700); err != nil {
+		panic(err)
+	}
+	db, err := store.Open(*dbPath)
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
 	var alerts []Alert
 	seen := map[string]bool{}
 	var assets map[string]enrich.Asset
@@ -186,6 +194,21 @@ func run(args []string) {
 			panic(err)
 		}
 	}
+	rows, e := db.ListSuppressions(context.Background())
+	if e != nil {
+		panic(e)
+	}
+	for _, row := range rows {
+		var expires *time.Time
+		if row.ExpiresAt != "" {
+			t, parseErr := time.Parse(time.RFC3339Nano, row.ExpiresAt)
+			if parseErr != nil {
+				continue
+			}
+			expires = &t
+		}
+		suppressions = append(suppressions, rules.Suppression{Match: rules.Match{Fingerprint: row.Fingerprint}, Action: row.Action, Reason: row.Reason, CreatedBy: row.CreatedBy, ExpiresAt: expires})
+	}
 	s := bufio.NewScanner(f)
 	for s.Scan() {
 		var a Alert
@@ -201,7 +224,7 @@ func run(args []string) {
 		seen[a.ID] = true
 		if len(suppressions) > 0 {
 			agentID, _ := a.Agent["id"].(string)
-			d := rules.Evaluate(rules.Alert{RuleID: a.RuleID, RuleDesc: a.RuleDesc, SrcIP: a.SrcIP, Groups: a.Groups, AgentID: agentID}, suppressions, time.Now().UTC())
+			d := rules.Evaluate(rules.Alert{RuleID: a.RuleID, RuleDesc: a.RuleDesc, SrcIP: a.SrcIP, Groups: a.Groups, AgentID: agentID, Fingerprint: a.RuleID + "|" + agentID + "|" + a.SrcIP}, suppressions, time.Now().UTC())
 			if d.Suppressed {
 				continue
 			}
@@ -220,14 +243,6 @@ func run(args []string) {
 	}
 	sortAlerts(alerts)
 	inc := groupWithWindow(alerts, cfg.Correlation.Window, cfg.Correlation.MaxIncidentAge)
-	if err := os.MkdirAll(filepath.Dir(*dbPath), 0700); err != nil {
-		panic(err)
-	}
-	db, err := store.Open(*dbPath)
-	if err != nil {
-		panic(err)
-	}
-	defer db.Close()
 	for _, a := range alerts {
 		if e := db.SaveAlert(context.Background(), a.ID, "file", a.Timestamp, a); e != nil {
 			panic(e)

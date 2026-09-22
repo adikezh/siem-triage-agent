@@ -18,3 +18,13 @@ func TestEvaluateCIDRAndExpiry(t *testing.T) {
 		t.Fatal("expired rule matched")
 	}
 }
+
+func TestEvaluateFingerprint(t *testing.T) {
+	ss := []Suppression{{Match: Match{Fingerprint: "r|a|1.2.3.4"}, Action: "drop"}}
+	if !Evaluate(Alert{Fingerprint: "r|a|1.2.3.4"}, ss, time.Now()).Suppressed {
+		t.Fatal("expected fingerprint suppression")
+	}
+	if Evaluate(Alert{Fingerprint: "r|a|1.2.3.5"}, ss, time.Now()).Suppressed {
+		t.Fatal("unexpected fingerprint suppression")
+	}
+}

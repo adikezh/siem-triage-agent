@@ -11,10 +11,10 @@ import (
 )
 
 type Alert struct {
-	RuleID, RuleDesc, SrcIP string
-	Groups                  []string
-	AgentID                 string
-	Internal                bool
+	RuleID, RuleDesc, SrcIP, Fingerprint string
+	Groups                               []string
+	AgentID                              string
+	Internal                             bool
 }
 type Suppression struct {
 	Match     Match      `yaml:"match"`
@@ -24,6 +24,7 @@ type Suppression struct {
 	CreatedBy string     `yaml:"created_by"`
 }
 type Match struct {
+	Fingerprint string   `yaml:"fingerprint"`
 	RuleID      string   `yaml:"rule_id"`
 	SrcIP       string   `yaml:"src_ip"`
 	Description string   `yaml:"description"`
@@ -76,6 +77,9 @@ func Evaluate(a Alert, ss []Suppression, now time.Time) Decision {
 	return Decision{}
 }
 func matches(a Alert, m Match) bool {
+	if m.Fingerprint != "" && a.Fingerprint != m.Fingerprint {
+		return false
+	}
 	if m.RuleID != "" && a.RuleID != m.RuleID {
 		return false
 	}
