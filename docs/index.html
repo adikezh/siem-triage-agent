@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SIEM Triage Agent</title>
+  <style>body{font:16px system-ui,sans-serif;line-height:1.55;max-width:960px;margin:0 auto;padding:2rem;color:#17202a;background:#f6f8fa}main{background:#fff;padding:2rem;border-radius:12px;box-shadow:0 2px 12px #0001}h1{font-size:2.4rem}h2{margin-top:2rem}a{color:#0969da}li{margin:.35rem 0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.box{border:1px solid #d0d7de;border-radius:8px;padding:1rem}@media(max-width:700px){.grid{grid-template-columns:1fr}}</style>
+</head>
+<body><main>
+<h1>SIEM Triage Agent</h1>
+<p><strong>Turn noisy SIEM alerts into explainable, reviewable incidents.</strong></p>
+<h2>The problem</h2>
+<p>SOC L1 teams receive thousands of alerts every day. Rule severity alone does not capture asset criticality, threat-intelligence context, recurrence, or analyst feedback.</p>
+<h2>The solution</h2>
+<p>SIEM Triage Agent is a self-hosted Go service and CLI that:</p>
+<ul><li>ingests NDJSON and Wazuh/OpenSearch alerts;</li><li>correlates duplicates into incidents;</li><li>enriches assets, IOC, GeoIP, history, and threat intelligence;</li><li>scores incidents deterministically before optional LLM analysis;</li><li>sends reviewable cards to Telegram, Slack, webhooks, Jira, IRIS, and TheHive;</li><li>records TP/FP/Ack feedback and tamper-evident audit events;</li><li>exposes dashboard, REST API, OpenAPI, Prometheus metrics, and reports.</li></ul>
+<h2>Five-minute demo</h2>
+<pre><code>git clone https://github.com/adikezh/siem-triage-agent.git
+cd siem-triage-agent
+docker compose up --build</code></pre>
+<p>Open <code>http://localhost:8080</code>. The demo loads example alerts into SQLite.</p>
+<h2>Community and Pro</h2>
+<div class="grid"><div class="box"><h3>Community</h3><ul><li>Apache-2.0 core</li><li>SQLite</li><li>Wazuh/OpenSearch and NDJSON</li><li>Configured LLM providers</li><li>Telegram, Slack, webhook</li></ul></div><div class="box"><h3>Pro / enterprise</h3><ul><li>Commercial support and deployment</li><li>PostgreSQL and multi-tenant operations</li><li>OIDC/SSO and extended RBAC</li><li>Regulatory templates</li><li>MSSP-scale tuning</li></ul></div></div>
+<h2>Links</h2>
+<p><a href="https://github.com/adikezh/siem-triage-agent">Source and quick start</a> · <a href="https://github.com/adikezh/siem-triage-agent/releases">Release artifacts</a> · <a href="https://github.com/adikezh/siem-triage-agent/blob/master/TODO.md">Evidence backlog</a> · <a href="https://github.com/adikezh/siem-triage-agent/blob/master/LICENSE">Apache-2.0 license</a></p>
+</main></body></html>
