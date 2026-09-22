@@ -24,12 +24,12 @@ type Suppression struct {
 	CreatedBy string     `yaml:"created_by"`
 }
 type Match struct {
-	Fingerprint string   `yaml:"fingerprint"`
-	RuleID      string   `yaml:"rule_id"`
-	SrcIP       string   `yaml:"src_ip"`
-	Description string   `yaml:"description"`
-	Groups      []string `yaml:"groups"`
-	AgentID     string   `yaml:"agent_id"`
+	Fingerprint string   `yaml:"fingerprint" json:"fingerprint,omitempty"`
+	RuleID      string   `yaml:"rule_id" json:"rule_id,omitempty"`
+	SrcIP       string   `yaml:"src_ip" json:"src_ip,omitempty"`
+	Description string   `yaml:"description" json:"description,omitempty"`
+	Groups      []string `yaml:"groups" json:"groups,omitempty"`
+	AgentID     string   `yaml:"agent_id" json:"agent_id,omitempty"`
 }
 type File struct {
 	Suppressions []Suppression `yaml:"suppressions"`

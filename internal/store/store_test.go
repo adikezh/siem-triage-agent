@@ -67,11 +67,17 @@ func TestSuppressionCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err = s.CreateSuppressionWithMatch(context.Background(), "", `{"src_ip":"10.0.0.0/8","groups":["authentication_failed"]}`, "tag", "trusted auth noise", "", "analyst"); err != nil {
+		t.Fatal(err)
+	}
 	rows, err := s.ListSuppressions(context.Background())
-	if err != nil || len(rows) != 1 || rows[0].ID != x.ID || rows[0].Action != "drop" {
+	if err != nil || len(rows) != 2 || rows[1].ID != x.ID || rows[1].Action != "drop" || rows[0].MatchJSON == "" {
 		t.Fatalf("rows=%#v err=%v", rows, err)
 	}
 	if err = s.DeleteSuppression(context.Background(), x.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.DeleteSuppression(context.Background(), rows[0].ID); err != nil {
 		t.Fatal(err)
 	}
 	rows, err = s.ListSuppressions(context.Background())

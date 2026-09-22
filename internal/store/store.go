@@ -29,6 +29,7 @@ type Record struct {
 type SuppressionRecord struct {
 	ID          int64  `json:"id"`
 	Fingerprint string `json:"fingerprint"`
+	MatchJSON   string `json:"match_json,omitempty"`
 	Action      string `json:"action"`
 	Reason      string `json:"reason"`
 	ExpiresAt   string `json:"expires_at,omitempty"`
@@ -86,7 +87,7 @@ func (s *Store) migrate() error {
 	if err := exec(`CREATE TABLE IF NOT EXISTS alerts (id TEXT PRIMARY KEY, source TEXT NOT NULL, timestamp TEXT NOT NULL, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS incidents (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, alert_count INTEGER NOT NULL, score INTEGER NOT NULL, severity TEXT NOT NULL, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS feedback (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id TEXT NOT NULL REFERENCES incidents(id), verdict TEXT NOT NULL CHECK(verdict IN ('tp','fp','ack')), comment TEXT NOT NULL DEFAULT '', actor TEXT NOT NULL, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS suppressions (id INTEGER PRIMARY KEY AUTOINCREMENT, fingerprint TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('drop','downgrade','tag')), reason TEXT NOT NULL, expires_at TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL);`); err != nil {
+CREATE TABLE IF NOT EXISTS suppressions (id INTEGER PRIMARY KEY AUTOINCREMENT, fingerprint TEXT NOT NULL, match_json TEXT NOT NULL DEFAULT '', action TEXT NOT NULL CHECK(action IN ('drop','downgrade','tag')), reason TEXT NOT NULL, expires_at TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL);`); err != nil {
 		return fmt.Errorf("migrate sqlite: %w", err)
 	}
 	for _, query := range []string{`CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, event TEXT NOT NULL, actor TEXT NOT NULL, payload TEXT NOT NULL, prev_hash TEXT NOT NULL, hash TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL)`, `CREATE TABLE IF NOT EXISTS llm_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, prompt_hash TEXT NOT NULL, latency_ms INTEGER NOT NULL, used INTEGER NOT NULL, error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`, `CREATE TABLE IF NOT EXISTS source_cursors (source TEXT PRIMARY KEY, timestamp TEXT NOT NULL, sort_json BLOB NOT NULL, updated_at TEXT NOT NULL);
@@ -96,6 +97,9 @@ CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, inciden
 		}
 	}
 	if err := exec(`CREATE TABLE IF NOT EXISTS threat_cache (ip TEXT PRIMARY KEY, source TEXT NOT NULL, details TEXT NOT NULL, malicious INTEGER NOT NULL, expires_at TEXT NOT NULL, updated_at TEXT NOT NULL)`); err != nil {
+		return fmt.Errorf("migrate sqlite: %w", err)
+	}
+	if err := exec(`ALTER TABLE suppressions ADD COLUMN match_json TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 		return fmt.Errorf("migrate sqlite: %w", err)
 	}
 	return exec(`CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, role TEXT NOT NULL CHECK(role IN ('viewer','analyst','admin')), key_hash TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, revoked_at TEXT)`)
@@ -355,11 +359,15 @@ func (s *Store) AddFeedback(ctx context.Context, incidentID, verdict, comment, a
 }
 
 func (s *Store) CreateSuppression(ctx context.Context, fingerprint, action, reason, expiresAt, createdBy string) (SuppressionRecord, error) {
+	return s.CreateSuppressionWithMatch(ctx, fingerprint, "", action, reason, expiresAt, createdBy)
+}
+
+func (s *Store) CreateSuppressionWithMatch(ctx context.Context, fingerprint, matchJSON, action, reason, expiresAt, createdBy string) (SuppressionRecord, error) {
 	if createdBy == "" {
 		createdBy = "api"
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	r, err := s.db.ExecContext(ctx, `INSERT INTO suppressions(fingerprint,action,reason,expires_at,created_by,created_at) VALUES(?,?,?,?,?,?)`, fingerprint, action, reason, nullableText(expiresAt), createdBy, now)
+	r, err := s.db.ExecContext(ctx, `INSERT INTO suppressions(fingerprint,match_json,action,reason,expires_at,created_by,created_at) VALUES(?,?,?,?,?,?,?)`, fingerprint, matchJSON, action, reason, nullableText(expiresAt), createdBy, now)
 	if err != nil {
 		return SuppressionRecord{}, err
 	}
@@ -367,14 +375,14 @@ func (s *Store) CreateSuppression(ctx context.Context, fingerprint, action, reas
 	if err != nil {
 		return SuppressionRecord{}, err
 	}
-	if err = s.appendAudit(ctx, "suppression.created", createdBy, SuppressionRecord{ID: id, Fingerprint: fingerprint, Action: action, Reason: reason, ExpiresAt: expiresAt, CreatedBy: createdBy, CreatedAt: now}); err != nil {
+	if err = s.appendAudit(ctx, "suppression.created", createdBy, SuppressionRecord{ID: id, Fingerprint: fingerprint, MatchJSON: matchJSON, Action: action, Reason: reason, ExpiresAt: expiresAt, CreatedBy: createdBy, CreatedAt: now}); err != nil {
 		return SuppressionRecord{}, err
 	}
-	return SuppressionRecord{ID: id, Fingerprint: fingerprint, Action: action, Reason: reason, ExpiresAt: expiresAt, CreatedBy: createdBy, CreatedAt: now}, nil
+	return SuppressionRecord{ID: id, Fingerprint: fingerprint, MatchJSON: matchJSON, Action: action, Reason: reason, ExpiresAt: expiresAt, CreatedBy: createdBy, CreatedAt: now}, nil
 }
 
 func (s *Store) ListSuppressions(ctx context.Context) ([]SuppressionRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,fingerprint,action,reason,COALESCE(expires_at,''),created_by,created_at FROM suppressions ORDER BY id DESC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,fingerprint,COALESCE(match_json,''),action,reason,COALESCE(expires_at,''),created_by,created_at FROM suppressions ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -382,7 +390,7 @@ func (s *Store) ListSuppressions(ctx context.Context) ([]SuppressionRecord, erro
 	var out []SuppressionRecord
 	for rows.Next() {
 		var x SuppressionRecord
-		if err := rows.Scan(&x.ID, &x.Fingerprint, &x.Action, &x.Reason, &x.ExpiresAt, &x.CreatedBy, &x.CreatedAt); err != nil {
+		if err := rows.Scan(&x.ID, &x.Fingerprint, &x.MatchJSON, &x.Action, &x.Reason, &x.ExpiresAt, &x.CreatedBy, &x.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, x)

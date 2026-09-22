@@ -323,7 +323,11 @@ func run(args []string) {
 			}
 			expires = &t
 		}
-		suppressions = append(suppressions, rules.Suppression{Match: rules.Match{Fingerprint: row.Fingerprint}, Action: row.Action, Reason: row.Reason, CreatedBy: row.CreatedBy, ExpiresAt: expires})
+		match := rules.Match{Fingerprint: row.Fingerprint}
+		if row.MatchJSON != "" {
+			_ = json.Unmarshal([]byte(row.MatchJSON), &match)
+		}
+		suppressions = append(suppressions, rules.Suppression{Match: match, Action: row.Action, Reason: row.Reason, CreatedBy: row.CreatedBy, ExpiresAt: expires})
 	}
 	s := bufio.NewScanner(f)
 	for s.Scan() {
@@ -808,9 +812,17 @@ func serve(args []string) {
 			w.Header().Set("content-type", "application/json")
 			_ = json.NewEncoder(w).Encode(rows)
 		case http.MethodPost:
-			var input struct{ Fingerprint, Action, Reason, ExpiresAt, CreatedBy string }
-			if e := json.NewDecoder(r.Body).Decode(&input); e != nil || input.Fingerprint == "" || input.Reason == "" {
-				http.Error(w, "fingerprint and reason are required", http.StatusBadRequest)
+			var input struct {
+				Fingerprint, Action, Reason, ExpiresAt, CreatedBy string
+				Match                                             rules.Match `json:"match"`
+			}
+			if e := json.NewDecoder(r.Body).Decode(&input); e != nil {
+				http.Error(w, "invalid JSON", http.StatusBadRequest)
+				return
+			}
+			matchEmpty := input.Match.Fingerprint == "" && input.Match.RuleID == "" && input.Match.SrcIP == "" && input.Match.Description == "" && input.Match.AgentID == "" && len(input.Match.Groups) == 0
+			if input.Fingerprint == "" && matchEmpty || input.Reason == "" {
+				http.Error(w, "fingerprint or match and reason are required", http.StatusBadRequest)
 				return
 			}
 			if input.Action != "drop" && input.Action != "downgrade" && input.Action != "tag" {
@@ -823,7 +835,16 @@ func serve(args []string) {
 					return
 				}
 			}
-			x, e := db.CreateSuppression(r.Context(), input.Fingerprint, input.Action, input.Reason, input.ExpiresAt, input.CreatedBy)
+			matchJSON := ""
+			if input.Fingerprint == "" {
+				encoded, marshalErr := json.Marshal(input.Match)
+				if marshalErr != nil {
+					http.Error(w, "invalid match", http.StatusBadRequest)
+					return
+				}
+				matchJSON = string(encoded)
+			}
+			x, e := db.CreateSuppressionWithMatch(r.Context(), input.Fingerprint, matchJSON, input.Action, input.Reason, input.ExpiresAt, input.CreatedBy)
 			if e != nil {
 				http.Error(w, "could not save suppression", http.StatusInternalServerError)
 				return
@@ -1178,7 +1199,11 @@ func liveSuppressions(ctx context.Context, db *store.Store, path string) ([]rule
 				expires = &t
 			}
 		}
-		out = append(out, rules.Suppression{Match: rules.Match{Fingerprint: row.Fingerprint}, Action: row.Action, Reason: row.Reason, CreatedBy: row.CreatedBy, ExpiresAt: expires})
+		match := rules.Match{Fingerprint: row.Fingerprint}
+		if row.MatchJSON != "" {
+			_ = json.Unmarshal([]byte(row.MatchJSON), &match)
+		}
+		out = append(out, rules.Suppression{Match: match, Action: row.Action, Reason: row.Reason, CreatedBy: row.CreatedBy, ExpiresAt: expires})
 	}
 	return out, nil
 }
