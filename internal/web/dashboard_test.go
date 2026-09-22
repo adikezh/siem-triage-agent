@@ -26,6 +26,12 @@ func TestDashboard(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "rule|agent|ip") || !strings.Contains(w.Body.String(), "high") || !strings.Contains(w.Body.String(), "/incidents/i") {
 		t.Fatalf("dashboard %d %s", w.Code, w.Body.String())
 	}
+	r = httptest.NewRequest("GET", "/stats", nil)
+	w = httptest.NewRecorder()
+	Handler(s).ServeHTTP(w, r)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Dashboard") || !strings.Contains(w.Body.String(), "Total: 1") || !strings.Contains(w.Body.String(), "high") {
+		t.Fatalf("stats dashboard %d %s", w.Code, w.Body.String())
+	}
 	r = httptest.NewRequest("GET", "/?severity=low", nil)
 	w = httptest.NewRecorder()
 	Handler(s).ServeHTTP(w, r)
