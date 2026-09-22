@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -410,6 +411,60 @@ func serve(args []string) {
 		}
 		w.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"total": len(rows), "by_severity": counts})
+	}), auth.HashKey(apiKey)))
+	http.Handle("/api/suppressions", auth.MiddlewareHash(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			rows, e := db.ListSuppressions(r.Context())
+			if e != nil {
+				http.Error(w, "storage error", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("content-type", "application/json")
+			_ = json.NewEncoder(w).Encode(rows)
+		case http.MethodPost:
+			var input struct{ Fingerprint, Action, Reason, ExpiresAt, CreatedBy string }
+			if e := json.NewDecoder(r.Body).Decode(&input); e != nil || input.Fingerprint == "" || input.Reason == "" {
+				http.Error(w, "fingerprint and reason are required", http.StatusBadRequest)
+				return
+			}
+			if input.Action != "drop" && input.Action != "downgrade" && input.Action != "tag" {
+				http.Error(w, "action must be drop, downgrade or tag", http.StatusBadRequest)
+				return
+			}
+			if input.ExpiresAt != "" {
+				if _, e := time.Parse(time.RFC3339, input.ExpiresAt); e != nil {
+					http.Error(w, "expires_at must be RFC3339", http.StatusBadRequest)
+					return
+				}
+			}
+			x, e := db.CreateSuppression(r.Context(), input.Fingerprint, input.Action, input.Reason, input.ExpiresAt, input.CreatedBy)
+			if e != nil {
+				http.Error(w, "could not save suppression", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("content-type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(x)
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	}), auth.HashKey(apiKey)))
+	http.Handle("/api/suppressions/", auth.MiddlewareHash(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		id, e := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/api/suppressions/"), 10, 64)
+		if e != nil || id <= 0 {
+			http.Error(w, "invalid suppression id", http.StatusBadRequest)
+			return
+		}
+		if e = db.DeleteSuppression(r.Context(), id); e != nil {
+			http.Error(w, "could not delete suppression", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}), auth.HashKey(apiKey)))
 	feedbackHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {

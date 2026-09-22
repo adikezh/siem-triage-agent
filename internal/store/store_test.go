@@ -53,3 +53,26 @@ func TestSQLitePersistenceAndFeedback(t *testing.T) {
 		t.Fatalf("feedback=%#v %v", rows, e)
 	}
 }
+
+func TestSuppressionCRUD(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "triage.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	x, err := s.CreateSuppression(context.Background(), "r|a|10.0.0.1", "drop", "known scanner", "", "analyst")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.ListSuppressions(context.Background())
+	if err != nil || len(rows) != 1 || rows[0].ID != x.ID || rows[0].Action != "drop" {
+		t.Fatalf("rows=%#v err=%v", rows, err)
+	}
+	if err = s.DeleteSuppression(context.Background(), x.ID); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = s.ListSuppressions(context.Background())
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("rows after delete=%#v err=%v", rows, err)
+	}
+}

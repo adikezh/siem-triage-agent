@@ -18,6 +18,16 @@ type Record struct {
 	Payload                                        json.RawMessage
 }
 
+type SuppressionRecord struct {
+	ID          int64  `json:"id"`
+	Fingerprint string `json:"fingerprint"`
+	Action      string `json:"action"`
+	Reason      string `json:"reason"`
+	ExpiresAt   string `json:"expires_at,omitempty"`
+	CreatedBy   string `json:"created_by"`
+	CreatedAt   string `json:"created_at"`
+}
+
 func (s *Store) SaveAlert(ctx context.Context, id, source string, timestamp time.Time, payload any) error {
 	b, e := json.Marshal(payload)
 	if e != nil {
@@ -148,6 +158,51 @@ func (s *Store) AddFeedback(ctx context.Context, incidentID, verdict, comment, a
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO feedback(incident_id,verdict,comment,actor,created_at) VALUES(?,?,?,?,?)`, incidentID, verdict, comment, actor, time.Now().UTC().Format(time.RFC3339Nano))
 	return err
+}
+
+func (s *Store) CreateSuppression(ctx context.Context, fingerprint, action, reason, expiresAt, createdBy string) (SuppressionRecord, error) {
+	if createdBy == "" {
+		createdBy = "api"
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	r, err := s.db.ExecContext(ctx, `INSERT INTO suppressions(fingerprint,action,reason,expires_at,created_by,created_at) VALUES(?,?,?,?,?,?)`, fingerprint, action, reason, nullableText(expiresAt), createdBy, now)
+	if err != nil {
+		return SuppressionRecord{}, err
+	}
+	id, err := r.LastInsertId()
+	if err != nil {
+		return SuppressionRecord{}, err
+	}
+	return SuppressionRecord{ID: id, Fingerprint: fingerprint, Action: action, Reason: reason, ExpiresAt: expiresAt, CreatedBy: createdBy, CreatedAt: now}, nil
+}
+
+func (s *Store) ListSuppressions(ctx context.Context) ([]SuppressionRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,fingerprint,action,reason,COALESCE(expires_at,''),created_by,created_at FROM suppressions ORDER BY id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SuppressionRecord
+	for rows.Next() {
+		var x SuppressionRecord
+		if err := rows.Scan(&x.ID, &x.Fingerprint, &x.Action, &x.Reason, &x.ExpiresAt, &x.CreatedBy, &x.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteSuppression(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM suppressions WHERE id=?`, id)
+	return err
+}
+
+func nullableText(v string) any {
+	if v == "" {
+		return nil
+	}
+	return v
 }
 
 func (s *Store) ListIncidents(ctx context.Context) ([]Record, error) {
