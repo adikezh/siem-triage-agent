@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"github.com/adikezh/siem-triage-agent/internal/store"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +46,29 @@ func TestWebhookFeedbackCallbacks(t *testing.T) {
 	rows, err := db.ListFeedback(context.Background())
 	if err != nil || len(rows) != 1 || rows[0].Verdict != "fp" || rows[0].Actor != "alice" {
 		t.Fatalf("feedback=%#v err=%v", rows, err)
+	}
+}
+
+func TestSlackSignatureAuth(t *testing.T) {
+	body := `{"actions":[{"action_id":"open","value":"inc-1"}]}`
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	mac := hmac.New(sha256.New, []byte("signing-secret"))
+	_, _ = mac.Write([]byte("v0:" + ts + ":" + body))
+	r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	r.Header.Set("X-Slack-Request-Timestamp", ts)
+	r.Header.Set("X-Slack-Signature", "v0="+hex.EncodeToString(mac.Sum(nil)))
+	w := httptest.NewRecorder()
+	slackSignatureAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), "signing-secret").ServeHTTP(w, r)
+	if w.Code != 204 {
+		t.Fatalf("valid signature status=%d", w.Code)
+	}
+	r = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	r.Header.Set("X-Slack-Request-Timestamp", ts)
+	r.Header.Set("X-Slack-Signature", "v0=bad")
+	w = httptest.NewRecorder()
+	slackSignatureAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), "signing-secret").ServeHTTP(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("invalid signature status=%d", w.Code)
 	}
 }
 

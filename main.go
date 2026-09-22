@@ -3,12 +3,15 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -430,6 +433,7 @@ func serve(args []string) {
 	configPath := fs.String("config", "", "YAML configuration path")
 	apiKeyEnv := fs.String("api-key-env", "", "environment variable containing API key")
 	webhookSecretEnv := fs.String("webhook-secret-env", "", "environment variable containing Telegram/Slack webhook secret")
+	slackSigningSecretEnv := fs.String("slack-signing-secret-env", "", "environment variable containing Slack signing secret")
 	tlsCert := fs.String("tls-cert", "", "TLS certificate path")
 	tlsKey := fs.String("tls-key", "", "TLS private key path")
 	fs.Parse(args)
@@ -498,6 +502,13 @@ func serve(args []string) {
 		webhookSecret = strings.TrimSpace(os.Getenv(*webhookSecretEnv))
 		if webhookSecret == "" {
 			panic("webhook secret environment variable is empty")
+		}
+	}
+	slackSigningSecret := ""
+	if *slackSigningSecretEnv != "" {
+		slackSigningSecret = strings.TrimSpace(os.Getenv(*slackSigningSecretEnv))
+		if slackSigningSecret == "" {
+			panic("slack signing secret environment variable is empty")
 		}
 	}
 	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
@@ -661,7 +672,11 @@ func serve(args []string) {
 	})
 	http.Handle("/api/incidents/feedback", protectRoles(feedbackHandler, "analyst", "admin"))
 	http.Handle("/api/integrations/telegram/callback", callbackAuth(webhookHandler(db, "telegram"), webhookSecret))
-	http.Handle("/api/integrations/slack/callback", callbackAuth(webhookHandler(db, "slack"), webhookSecret))
+	slackCallback := callbackAuth(webhookHandler(db, "slack"), webhookSecret)
+	if slackSigningSecret != "" {
+		slackCallback = slackSignatureAuth(slackCallback, slackSigningSecret)
+	}
+	http.Handle("/api/integrations/slack/callback", slackCallback)
 	fmt.Println("listening on", *addr)
 	if (*tlsCert == "") != (*tlsKey == "") {
 		panic("tls-cert and tls-key must be provided together")
@@ -690,6 +705,32 @@ func callbackAuth(next http.Handler, secret string) http.Handler {
 			http.Error(w, "invalid webhook secret", http.StatusUnauthorized)
 			return
 		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func slackSignatureAuth(next http.Handler, secret string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ts := r.Header.Get("X-Slack-Request-Timestamp")
+		stamp, err := strconv.ParseInt(ts, 10, 64)
+		if err != nil || time.Since(time.Unix(stamp, 0)) > 5*time.Minute || time.Since(time.Unix(stamp, 0)) < -5*time.Minute {
+			http.Error(w, "invalid Slack timestamp", http.StatusUnauthorized)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "could not read request", http.StatusBadRequest)
+			return
+		}
+		base := "v0:" + ts + ":" + string(body)
+		mac := hmac.New(sha256.New, []byte(secret))
+		_, _ = mac.Write([]byte(base))
+		expected := "v0=" + fmt.Sprintf("%x", mac.Sum(nil))
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Slack-Signature")), []byte(expected)) != 1 {
+			http.Error(w, "invalid Slack signature", http.StatusUnauthorized)
+			return
+		}
+		r.Body = io.NopCloser(strings.NewReader(string(body)))
 		next.ServeHTTP(w, r)
 	})
 }
