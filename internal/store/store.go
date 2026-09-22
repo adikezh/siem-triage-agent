@@ -36,11 +36,23 @@ func (s *Store) migrate() error {
 	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS alerts (id TEXT PRIMARY KEY, source TEXT NOT NULL, timestamp TEXT NOT NULL, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS incidents (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, alert_count INTEGER NOT NULL, score INTEGER NOT NULL, severity TEXT NOT NULL, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS feedback (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id TEXT NOT NULL REFERENCES incidents(id), verdict TEXT NOT NULL CHECK(verdict IN ('tp','fp','ack')), comment TEXT NOT NULL DEFAULT '', actor TEXT NOT NULL, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS suppressions (id INTEGER PRIMARY KEY AUTOINCREMENT, fingerprint TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('drop','downgrade','tag')), reason TEXT NOT NULL, expires_at TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL);`)
+	CREATE TABLE IF NOT EXISTS suppressions (id INTEGER PRIMARY KEY AUTOINCREMENT, fingerprint TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('drop','downgrade','tag')), reason TEXT NOT NULL, expires_at TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL);`)
+	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS llm_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, prompt_hash TEXT NOT NULL, latency_ms INTEGER NOT NULL, used INTEGER NOT NULL, error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`)
 	if err != nil {
 		return fmt.Errorf("migrate sqlite: %w", err)
 	}
 	return nil
+}
+
+type LLMTrace struct {
+	IncidentID, Provider, Model, PromptHash, Error string
+	LatencyMS                                      int64
+	Used                                           bool
+}
+
+func (s *Store) SaveLLMTrace(ctx context.Context, t LLMTrace) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO llm_calls(incident_id,provider,model,prompt_hash,latency_ms,used,error,created_at) VALUES(?,?,?,?,?,?,?,?)`, t.IncidentID, t.Provider, t.Model, t.PromptHash, t.LatencyMS, t.Used, t.Error, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
 }
 
 func (s *Store) SaveIncident(ctx context.Context, incident any, id, fingerprint, severity string, score, count int, first, last time.Time) error {

@@ -20,4 +20,7 @@ func TestSQLitePersistenceAndFeedback(t *testing.T) {
 	if e = s.AddFeedback(context.Background(), "i1", "fp", "noise", "analyst"); e != nil {
 		t.Fatal(e)
 	}
+	if e = s.SaveLLMTrace(context.Background(), LLMTrace{IncidentID: "i1", Provider: "rule-only", Model: "", PromptHash: "abc"}); e != nil {
+		t.Fatal(e)
+	}
 }
