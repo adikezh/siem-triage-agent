@@ -333,11 +333,11 @@ func run(args []string) {
 		engine = &triageengine.Engine{Threshold: cfg.Triage.LLMThreshold, Provider: llm.ChainProvider{Chain: llm.Chain{Providers: providers, Budget: budget}}, Model: model, InternalCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"}}
 	}
 	for _, i := range inc {
-		fpCount, e := db.FalsePositiveCount(context.Background(), i.Fingerprint)
+		fpCount, hasTP, e := db.FingerprintStats(context.Background(), i.Fingerprint, time.Now().UTC().Add(-30*24*time.Hour))
 		if e != nil {
 			panic(e)
 		}
-		if fpCount >= 20 {
+		if fpCount >= 20 && !hasTP {
 			s := scoring.Score(scoring.Input{RuleLevel: i.RuleLevel, Malicious: i.Malicious, Criticality: i.Criticality, HighImpactTactic: i.HighImpactTactic, InternalWhitelist: i.Internal, FrequentFalsePositive: true})
 			i.Score = s
 			i.Severity = scoring.Severity(s)
@@ -348,6 +348,7 @@ func run(args []string) {
 				panic(historyErr)
 			}
 			historyParts := make([]string, 0, len(historyRows))
+			historyParts = append(historyParts, fmt.Sprintf("fingerprint_seen_30d=%d; fingerprint_has_tp=%t", fpCount, hasTP))
 			for _, h := range historyRows {
 				historyParts = append(historyParts, h.LastSeen+":"+h.Severity+":"+h.Verdict)
 			}

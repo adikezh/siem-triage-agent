@@ -486,6 +486,18 @@ func (s *Store) FalsePositiveCount(ctx context.Context, fingerprint string) (int
 	return n, err
 }
 
+// FingerprintStats returns the number of alerts represented by incidents seen
+// since the supplied time and whether analysts have ever marked that
+// fingerprint as a true positive.
+func (s *Store) FingerprintStats(ctx context.Context, fingerprint string, since time.Time) (count int, hasTP bool, err error) {
+	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(alert_count),0) FROM incidents WHERE fingerprint=? AND last_seen>=?`, fingerprint, since.UTC().Format(time.RFC3339Nano)).Scan(&count)
+	if err != nil {
+		return 0, false, err
+	}
+	err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM feedback f JOIN incidents i ON i.id=f.incident_id WHERE i.fingerprint=? AND f.verdict='tp')`, fingerprint).Scan(&hasTP)
+	return count, hasTP, err
+}
+
 func (s *Store) IncidentHistory(ctx context.Context, fingerprint string, limit int) ([]HistoryRecord, error) {
 	if limit <= 0 {
 		limit = 5

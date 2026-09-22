@@ -117,6 +117,29 @@ func TestIncidentHistory(t *testing.T) {
 	}
 }
 
+func TestFingerprintStats(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "stats.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	now := time.Now().UTC()
+	if err = s.SaveIncident(context.Background(), map[string]string{}, "stats-1", "same", "medium", 50, 3, now, now); err != nil {
+		t.Fatal(err)
+	}
+	count, hasTP, err := s.FingerprintStats(context.Background(), "same", now.Add(-time.Hour))
+	if err != nil || count != 3 || hasTP {
+		t.Fatalf("stats=%d,%v err=%v", count, hasTP, err)
+	}
+	if err = s.AddFeedback(context.Background(), "stats-1", "tp", "confirmed", "analyst"); err != nil {
+		t.Fatal(err)
+	}
+	_, hasTP, err = s.FingerprintStats(context.Background(), "same", now.Add(-time.Hour))
+	if err != nil || !hasTP {
+		t.Fatalf("tp stats=%v err=%v", hasTP, err)
+	}
+}
+
 func TestAPIKeyHashAndVerify(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "triage.db"))
 	if err != nil {
