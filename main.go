@@ -9,15 +9,18 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/adikezh/siem-triage-agent/internal/auth"
@@ -756,6 +759,8 @@ func serve(args []string) {
 		slackCallback = slackSignatureAuth(slackCallback, slackSigningSecret)
 	}
 	http.Handle("/api/integrations/slack/callback", slackCallback)
+	serveCtx, cancelServe := context.WithCancel(context.Background())
+	defer cancelServe()
 	if *sourceURL != "" {
 		if *sourceInterval <= 0 {
 			panic("source-interval must be positive")
@@ -768,19 +773,30 @@ func serve(args []string) {
 		if *webhookURL != "" {
 			sender = notify.Webhook{URL: *webhookURL, Secret: webhookSecret}
 		}
-		go pollWazuh(context.Background(), db, ingest.WazuhClient{BaseURL: *sourceURL, Index: *sourceIndex, Username: *sourceUser, Password: password}, *sourceInterval, cfg.Correlation.Window, cfg.Correlation.MaxIncidentAge, cfg.Correlation.Grouping, cfg.Enrichment.InternalCIDRs, assets, iocs, engine, sender, cfg.Correlation.SuppressionsFile)
+		go pollWazuh(serveCtx, db, ingest.WazuhClient{BaseURL: *sourceURL, Index: *sourceIndex, Username: *sourceUser, Password: password}, *sourceInterval, cfg.Correlation.Window, cfg.Correlation.MaxIncidentAge, cfg.Correlation.Grouping, cfg.Enrichment.InternalCIDRs, assets, iocs, engine, sender, cfg.Correlation.SuppressionsFile)
 	}
 	fmt.Println("listening on", *addr)
 	if (*tlsCert == "") != (*tlsKey == "") {
 		panic("tls-cert and tls-key must be provided together")
 	}
+	server := &http.Server{Addr: *addr}
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(shutdown)
+	go func() {
+		<-shutdown
+		cancelServe()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
 	var e error
 	if *tlsCert != "" {
-		e = http.ListenAndServeTLS(*addr, *tlsCert, *tlsKey, nil)
+		e = server.ListenAndServeTLS(*tlsCert, *tlsKey)
 	} else {
-		e = http.ListenAndServe(*addr, nil)
+		e = server.ListenAndServe()
 	}
-	if e != nil {
+	if e != nil && !errors.Is(e, http.ErrServerClosed) {
 		panic(e)
 	}
 }
