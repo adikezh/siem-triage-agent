@@ -1352,13 +1352,17 @@ func feedbackExport(args []string) {
 func reportCommand(args []string) {
 	fs := flag.NewFlagSet("report", flag.ExitOnError)
 	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
-	period := fs.String("period", "7d", "period: 24h, 7d, 30d")
+	period := fs.String("period", "7d", "period: day, week, month, 24h, 7d or 30d")
 	out := fs.String("out", "", "output markdown path")
 	format := fs.String("format", "md", "format: md, pdf or docx")
 	fs.Parse(args)
 	if *format != "md" && *format != "pdf" && *format != "docx" {
 		fmt.Fprintln(os.Stderr, "format must be md, pdf or docx")
 		os.Exit(2)
+	}
+	periodValue := map[string]string{"day": "24h", "week": "168h", "month": "720h"}[*period]
+	if periodValue != "" {
+		*period = periodValue
 	}
 	d, e := time.ParseDuration(*period)
 	if e != nil {
