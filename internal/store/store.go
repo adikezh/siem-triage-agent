@@ -158,4 +158,12 @@ func (s *Store) ListIncidents(ctx context.Context) ([]Record, error) {
 	return out, rows.Err()
 }
 
+func (s *Store) GetIncident(ctx context.Context, id string) (Record, error) {
+	var r Record
+	var p []byte
+	err := s.db.QueryRowContext(ctx, `SELECT id,fingerprint,first_seen,last_seen,alert_count,score,severity,payload FROM incidents WHERE id=?`, id).Scan(&r.ID, &r.Fingerprint, &r.FirstSeen, &r.LastSeen, &r.AlertCount, &r.Score, &r.Severity, &p)
+	r.Payload = p
+	return r, err
+}
+
 func (s *Store) Close() error { return s.db.Close() }

@@ -287,6 +287,29 @@ func serve(args []string) {
 		_ = json.NewEncoder(w).Encode(records)
 	})
 	http.Handle("/api/incidents", auth.MiddlewareHash(incidentsHandler, auth.HashKey(apiKey)))
+	http.Handle("/api/incidents/", auth.MiddlewareHash(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/api/incidents/")
+		rec, e := db.GetIncident(r.Context(), id)
+		if e != nil {
+			http.Error(w, "incident not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(rec)
+	}), auth.HashKey(apiKey)))
+	http.Handle("/api/stats", auth.MiddlewareHash(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rows, e := db.ListIncidents(r.Context())
+		if e != nil {
+			http.Error(w, "storage error", 500)
+			return
+		}
+		counts := map[string]int{}
+		for _, x := range rows {
+			counts[x.Severity]++
+		}
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"total": len(rows), "by_severity": counts})
+	}), auth.HashKey(apiKey)))
 	feedbackHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
