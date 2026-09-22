@@ -271,6 +271,8 @@ func serve(args []string) {
 	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
 	configPath := fs.String("config", "", "YAML configuration path")
 	apiKeyEnv := fs.String("api-key-env", "", "environment variable containing API key")
+	tlsCert := fs.String("tls-cert", "", "TLS certificate path")
+	tlsKey := fs.String("tls-key", "", "TLS private key path")
 	fs.Parse(args)
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -362,7 +364,16 @@ func serve(args []string) {
 	})
 	http.Handle("/api/incidents/feedback", auth.MiddlewareHash(feedbackHandler, auth.HashKey(apiKey)))
 	fmt.Println("listening on", *addr)
-	if e := http.ListenAndServe(*addr, nil); e != nil {
+	if (*tlsCert == "") != (*tlsKey == "") {
+		panic("tls-cert and tls-key must be provided together")
+	}
+	var e error
+	if *tlsCert != "" {
+		e = http.ListenAndServeTLS(*addr, *tlsCert, *tlsKey, nil)
+	} else {
+		e = http.ListenAndServe(*addr, nil)
+	}
+	if e != nil {
 		panic(e)
 	}
 }
