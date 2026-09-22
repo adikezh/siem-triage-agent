@@ -33,6 +33,10 @@ type ThreatCacheRecord struct {
 	Malicious                      bool
 }
 
+type HistoryRecord struct {
+	IncidentID, Severity, Verdict, LastSeen string
+}
+
 func (s *Store) SaveAlert(ctx context.Context, id, source string, timestamp time.Time, payload any) error {
 	b, e := json.Marshal(payload)
 	if e != nil {
@@ -261,6 +265,26 @@ func (s *Store) FalsePositiveCount(ctx context.Context, fingerprint string) (int
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM feedback f JOIN incidents i ON i.id=f.incident_id WHERE i.fingerprint=? AND f.verdict='fp'`, fingerprint).Scan(&n)
 	return n, err
+}
+
+func (s *Store) IncidentHistory(ctx context.Context, fingerprint string, limit int) ([]HistoryRecord, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT i.id,i.severity,COALESCE((SELECT f.verdict FROM feedback f WHERE f.incident_id=i.id ORDER BY f.id DESC LIMIT 1),''),i.last_seen FROM incidents i WHERE i.fingerprint=? ORDER BY i.last_seen DESC LIMIT ?`, fingerprint, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []HistoryRecord
+	for rows.Next() {
+		var x HistoryRecord
+		if err := rows.Scan(&x.IncidentID, &x.Severity, &x.Verdict, &x.LastSeen); err != nil {
+			return nil, err
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
 }
 
 type FeedbackRecord struct {

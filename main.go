@@ -297,7 +297,20 @@ func run(args []string) {
 			i.Severity = scoring.Severity(s)
 		}
 		if engine != nil {
-			tr := engine.Analyze(context.Background(), triageengine.Case{Rule: scoring.Input{RuleLevel: i.RuleLevel, Malicious: i.Malicious, Criticality: i.Criticality, HighImpactTactic: i.HighImpactTactic, InternalWhitelist: i.Internal}, RuleSeverity: i.Severity, Prompt: llm.PromptInput{Rule: i.Fingerprint, Description: "correlated SIEM incident", SourceIP: strings.Split(i.Fingerprint, "|")[2]}})
+			historyRows, historyErr := db.IncidentHistory(context.Background(), i.Fingerprint, 5)
+			if historyErr != nil {
+				panic(historyErr)
+			}
+			historyParts := make([]string, 0, len(historyRows))
+			for _, h := range historyRows {
+				historyParts = append(historyParts, h.LastSeen+":"+h.Severity+":"+h.Verdict)
+			}
+			sourceIP := ""
+			parts := strings.Split(i.Fingerprint, "|")
+			if len(parts) >= 3 {
+				sourceIP = parts[2]
+			}
+			tr := engine.Analyze(context.Background(), triageengine.Case{Rule: scoring.Input{RuleLevel: i.RuleLevel, Malicious: i.Malicious, Criticality: i.Criticality, HighImpactTactic: i.HighImpactTactic, InternalWhitelist: i.Internal}, RuleSeverity: i.Severity, Prompt: llm.PromptInput{Rule: i.Fingerprint, Description: "correlated SIEM incident", SourceIP: sourceIP, History: strings.Join(historyParts, "; ")}})
 			i.Score = tr.Score
 			i.Severity = tr.Severity
 			_ = db.SaveLLMTrace(context.Background(), store.LLMTrace{IncidentID: i.Fingerprint, Provider: tr.Trace.Provider, Model: tr.Trace.Model, PromptHash: tr.Trace.PromptHash, LatencyMS: tr.Trace.LatencyMS, Used: tr.Trace.Used, Error: tr.Trace.Error})

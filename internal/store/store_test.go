@@ -91,3 +91,22 @@ func TestThreatCachePersistence(t *testing.T) {
 		t.Fatalf("cache=%#v ok=%v err=%v", x, ok, err)
 	}
 }
+
+func TestIncidentHistory(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "triage.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	now := time.Now().UTC()
+	if err = s.SaveIncident(context.Background(), map[string]string{"x": "1"}, "inc-1", "same", "high", 80, 1, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.AddFeedback(context.Background(), "inc-1", "fp", "", "analyst"); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.IncidentHistory(context.Background(), "same", 5)
+	if err != nil || len(rows) != 1 || rows[0].Verdict != "fp" {
+		t.Fatalf("history=%#v err=%v", rows, err)
+	}
+}
