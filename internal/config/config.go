@@ -35,6 +35,7 @@ type Config struct {
 		LLMThreshold int        `yaml:"llm_threshold"`
 		Mode         string     `yaml:"mode"`
 		Providers    []Provider `yaml:"providers"`
+		Budget       Budget     `yaml:"budget"`
 	} `yaml:"triage"`
 }
 
@@ -49,6 +50,11 @@ type Provider struct {
 	BaseURL   string `yaml:"base_url"`
 	Model     string `yaml:"model"`
 	APIKeyEnv string `yaml:"api_key_env"`
+}
+type Budget struct {
+	CallsPerHour int     `yaml:"calls_per_hour"`
+	USDPerDay    float64 `yaml:"usd_per_day"`
+	CostPerCall  float64 `yaml:"cost_per_call"`
 }
 
 func Defaults() Config {

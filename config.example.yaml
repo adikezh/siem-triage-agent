@@ -17,6 +17,10 @@ triage:
       type: ollama
       base_url: http://localhost:11434
       model: qwen2.5:7b
+  budget:
+    calls_per_hour: 200
+    usd_per_day: 5
+    cost_per_call: 0.01
     # - name: cloud
     #   type: anthropic
     #   base_url: https://api.anthropic.com

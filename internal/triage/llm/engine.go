@@ -66,6 +66,14 @@ type Chain struct {
 	Now       func() time.Time
 }
 
+type ChainProvider struct{ Chain Chain }
+
+func (p ChainProvider) Name() string { return "provider-chain" }
+func (p ChainProvider) Complete(ctx context.Context, req Request) (Response, error) {
+	r, _, err := p.Chain.Complete(ctx, req)
+	return r, err
+}
+
 func (c Chain) Complete(ctx context.Context, req Request) (Response, string, error) {
 	now := time.Now
 	if c.Now != nil {

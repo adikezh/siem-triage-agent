@@ -309,21 +309,25 @@ func run(args []string) {
 		p := llm.OpenAICompatible{BaseURL: *llmURL, APIKey: key}
 		engine = &triageengine.Engine{Threshold: cfg.Triage.LLMThreshold, Provider: p, Model: *llmModel, InternalCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"}}
 	} else if len(cfg.Triage.Providers) > 0 && cfg.Triage.Mode != "rule-only" {
-		p := cfg.Triage.Providers[0]
-		model := p.Model
-		key := os.Getenv(p.APIKeyEnv)
-		var provider llm.Provider
-		switch strings.ToLower(p.Type) {
-		case "openai_compatible", "openai-compatible":
-			provider = llm.OpenAICompatible{BaseURL: p.BaseURL, APIKey: key}
-		case "ollama":
-			provider = llm.Ollama{BaseURL: p.BaseURL}
-		case "anthropic":
-			provider = llm.Anthropic{BaseURL: p.BaseURL, APIKey: key}
-		default:
-			panic("unsupported configured LLM provider: " + p.Type)
+		providers := make([]llm.Provider, 0, len(cfg.Triage.Providers))
+		model := cfg.Triage.Providers[0].Model
+		for _, p := range cfg.Triage.Providers {
+			key := os.Getenv(p.APIKeyEnv)
+			var provider llm.Provider
+			switch strings.ToLower(p.Type) {
+			case "openai_compatible", "openai-compatible":
+				provider = llm.OpenAICompatible{BaseURL: p.BaseURL, APIKey: key}
+			case "ollama":
+				provider = llm.Ollama{BaseURL: p.BaseURL}
+			case "anthropic":
+				provider = llm.Anthropic{BaseURL: p.BaseURL, APIKey: key}
+			default:
+				panic("unsupported configured LLM provider: " + p.Type)
+			}
+			providers = append(providers, provider)
 		}
-		engine = &triageengine.Engine{Threshold: cfg.Triage.LLMThreshold, Provider: provider, Model: model, InternalCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"}}
+		budget := &llm.Budget{CallsPerHour: cfg.Triage.Budget.CallsPerHour, USDPerDay: cfg.Triage.Budget.USDPerDay, CostPerCall: cfg.Triage.Budget.CostPerCall}
+		engine = &triageengine.Engine{Threshold: cfg.Triage.LLMThreshold, Provider: llm.ChainProvider{Chain: llm.Chain{Providers: providers, Budget: budget}}, Model: model, InternalCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"}}
 	}
 	for _, i := range inc {
 		fpCount, e := db.FalsePositiveCount(context.Background(), i.Fingerprint)
