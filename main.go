@@ -169,7 +169,7 @@ func rulesTest(args []string) {
 		}
 		a.Internal = enrich.IsInternal(a.SrcIP, cfg.Enrichment.InternalCIDRs)
 		agentID, _ := a.Agent["id"].(string)
-		d := rules.Evaluate(rules.Alert{RuleID: a.RuleID, RuleDesc: a.RuleDesc, SrcIP: a.SrcIP, Groups: a.Groups, AgentID: agentID}, ss, time.Now().UTC())
+		d := rules.Evaluate(rules.Alert{RuleID: a.RuleID, RuleDesc: a.RuleDesc, SrcIP: a.SrcIP, Groups: a.Groups, AgentID: agentID, Fingerprint: alertFingerprint(a, cfg.Correlation.Grouping)}, ss, time.Now().UTC())
 		if d.Suppressed {
 			suppressed++
 		}
@@ -336,7 +336,7 @@ func run(args []string) {
 		seen[a.ID] = true
 		if len(suppressions) > 0 {
 			agentID, _ := a.Agent["id"].(string)
-			d := rules.Evaluate(rules.Alert{RuleID: a.RuleID, RuleDesc: a.RuleDesc, SrcIP: a.SrcIP, Groups: a.Groups, AgentID: agentID, Fingerprint: a.RuleID + "|" + agentID + "|" + a.SrcIP}, suppressions, time.Now().UTC())
+			d := rules.Evaluate(rules.Alert{RuleID: a.RuleID, RuleDesc: a.RuleDesc, SrcIP: a.SrcIP, Groups: a.Groups, AgentID: agentID, Fingerprint: alertFingerprint(a, cfg.Correlation.Grouping)}, suppressions, time.Now().UTC())
 			if d.Suppressed {
 				continue
 			}
@@ -964,7 +964,7 @@ func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, 
 			if err := json.Unmarshal(encoded, &alert); err == nil {
 				alert.Internal = enrich.IsInternal(alert.SrcIP, internalCIDRs)
 				agentID, _ := alert.Agent["id"].(string)
-				fingerprint := alert.RuleID + "|" + agentID + "|" + alert.SrcIP
+				fingerprint := alertFingerprint(alert, grouping)
 				decision := rules.Evaluate(rules.Alert{RuleID: alert.RuleID, RuleDesc: alert.RuleDesc, SrcIP: alert.SrcIP, Groups: alert.Groups, AgentID: agentID, Fingerprint: fingerprint}, suppressions, time.Now().UTC())
 				if decision.Suppressed {
 					continue
