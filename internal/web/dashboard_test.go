@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"github.com/adikezh/siem-triage-agent/internal/store"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -21,7 +22,37 @@ func TestDashboard(t *testing.T) {
 	r := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
 	Handler(s).ServeHTTP(w, r)
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "rule|agent|ip") || !strings.Contains(w.Body.String(), "high") {
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "rule|agent|ip") || !strings.Contains(w.Body.String(), "high") || !strings.Contains(w.Body.String(), "/incidents/i") {
 		t.Fatalf("dashboard %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestIncidentDetailAndFeedback(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "w.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	n := time.Now()
+	if err = s.SaveIncident(context.Background(), map[string]string{"event": "test"}, "inc-1", "fp", "high", 80, 1, n, n); err != nil {
+		t.Fatal(err)
+	}
+	h := Handler(s)
+	r := httptest.NewRequest("GET", "/incidents/inc-1", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "Incident payload") {
+		t.Fatalf("detail %d %s", w.Code, w.Body.String())
+	}
+	r = httptest.NewRequest("POST", "/incidents/inc-1/feedback", strings.NewReader("verdict=fp"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("feedback %d %s", w.Code, w.Body.String())
+	}
+	rows, err := s.ListFeedback(context.Background())
+	if err != nil || len(rows) != 1 || rows[0].Verdict != "fp" {
+		t.Fatalf("feedback=%#v err=%v", rows, err)
 	}
 }
