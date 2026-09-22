@@ -756,6 +756,7 @@ func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, 
 			return
 		}
 		suppressions, _ := liveSuppressions(ctx, db, suppressionFile)
+		accepted := make([]Alert, 0, len(hits))
 		for _, hit := range hits {
 			payload := ingest.NormalizeHit(hit)
 			var alert Alert
@@ -780,18 +781,18 @@ func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, 
 			}
 			encoded, _ = json.Marshal(payload)
 			if err := json.Unmarshal(encoded, &alert); err == nil {
-				incidents := groupWithWindow([]Alert{alert}, 15*time.Minute, 6*time.Hour)
-				for _, incident := range incidents {
-					id := incident.Fingerprint + "/" + incident.FirstSeen.Format(time.RFC3339Nano)
-					if err := db.SaveIncident(ctx, incident, id, incident.Fingerprint, incident.Severity, incident.Score, incident.AlertCount, incident.FirstSeen, incident.LastSeen); err != nil {
-						fmt.Fprintln(os.Stderr, "save incident:", err)
-						return
-					}
-					if sender != nil {
-						payload, _ := json.Marshal(incident)
-						_ = db.Enqueue(ctx, id, "webhook", payload)
-					}
-				}
+				accepted = append(accepted, alert)
+			}
+		}
+		for _, incident := range groupWithWindow(accepted, 15*time.Minute, 6*time.Hour) {
+			id := incident.Fingerprint + "/" + incident.FirstSeen.Format(time.RFC3339Nano)
+			if err := db.SaveIncident(ctx, incident, id, incident.Fingerprint, incident.Severity, incident.Score, incident.AlertCount, incident.FirstSeen, incident.LastSeen); err != nil {
+				fmt.Fprintln(os.Stderr, "save incident:", err)
+				return
+			}
+			if sender != nil {
+				payload, _ := json.Marshal(incident)
+				_ = db.Enqueue(ctx, id, "webhook", payload)
 			}
 		}
 		if sender != nil {
