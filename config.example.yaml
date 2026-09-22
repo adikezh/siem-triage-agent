@@ -8,6 +8,15 @@ storage:
 correlation:
   window: 15m
   max_incident_age: 6h
+  grouping:
+    default: [rule.id, agent.id, src_ip]
+    overrides:
+      - match:
+          groups: [authentication_failed]
+        key: [agent.id, src_ip]
+      - match:
+          groups: [syscheck]
+        key: [agent.id, rule.id]
   suppressions_file: configs/suppressions.example.yaml
 triage:
   llm_threshold: 40

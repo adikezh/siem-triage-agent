@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/adikezh/siem-triage-agent/internal/config"
 	"github.com/adikezh/siem-triage-agent/internal/ingest"
 	"github.com/adikezh/siem-triage-agent/internal/store"
 	"net/http"
@@ -26,6 +27,19 @@ func TestGroupWindow(t *testing.T) {
 	x := group(a)
 	if len(x) != 2 || x[0].AlertCount != 2 {
 		t.Fatalf("got %#v", x)
+	}
+}
+
+func TestGroupingOverride(t *testing.T) {
+	b := time.Now().UTC()
+	a := []Alert{
+		{Timestamp: b, RuleID: "r1", RuleLevel: 8, Groups: []string{"authentication_failed"}, Agent: map[string]any{"id": "a1"}, SrcIP: "1.2.3.4"},
+		{Timestamp: b.Add(5 * time.Minute), RuleID: "r2", RuleLevel: 8, Groups: []string{"authentication_failed"}, Agent: map[string]any{"id": "a1"}, SrcIP: "1.2.3.4"},
+	}
+	cfg := config.Grouping{Default: []string{"rule.id", "agent.id", "src_ip"}, Overrides: []config.GroupingOverride{{Match: config.GroupingMatch{Groups: []string{"authentication_failed"}}, Key: []string{"agent.id", "src_ip"}}}}
+	incidents := groupWithWindowConfig(a, 15*time.Minute, 6*time.Hour, cfg)
+	if len(incidents) != 1 || incidents[0].AlertCount != 2 || incidents[0].Fingerprint != "a1|1.2.3.4" {
+		t.Fatalf("got %#v", incidents)
 	}
 }
 
@@ -88,7 +102,7 @@ func TestPollWazuhPersistsAlertAndIncident(t *testing.T) {
 	defer db.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go pollWazuh(ctx, db, ingest.WazuhClient{BaseURL: srv.URL, Index: "alerts-*"}, time.Hour, 15*time.Minute, 6*time.Hour, nil, "")
+	go pollWazuh(ctx, db, ingest.WazuhClient{BaseURL: srv.URL, Index: "alerts-*"}, time.Hour, 15*time.Minute, 6*time.Hour, config.Grouping{Default: []string{"rule.id", "agent.id", "src_ip"}}, nil, "")
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		rows, e := db.ListIncidents(ctx)

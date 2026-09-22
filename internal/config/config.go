@@ -17,6 +17,7 @@ type Config struct {
 		Window           time.Duration `yaml:"window"`
 		MaxIncidentAge   time.Duration `yaml:"max_incident_age"`
 		SuppressionsFile string        `yaml:"suppressions_file"`
+		Grouping         Grouping      `yaml:"grouping"`
 	} `yaml:"correlation"`
 	Enrichment struct {
 		AssetsFile string `yaml:"assets_file"`
@@ -37,6 +38,20 @@ type Config struct {
 		Providers    []Provider `yaml:"providers"`
 		Budget       Budget     `yaml:"budget"`
 	} `yaml:"triage"`
+}
+
+type Grouping struct {
+	Default   []string           `yaml:"default"`
+	Overrides []GroupingOverride `yaml:"overrides"`
+}
+
+type GroupingOverride struct {
+	Match GroupingMatch `yaml:"match"`
+	Key   []string      `yaml:"key"`
+}
+
+type GroupingMatch struct {
+	Groups []string `yaml:"groups"`
 }
 
 type Retention struct {
@@ -64,6 +79,7 @@ func Defaults() Config {
 	c.Storage.Retention.LLMCalls = 90 * 24 * time.Hour
 	c.Correlation.Window = 15 * time.Minute
 	c.Correlation.MaxIncidentAge = 6 * time.Hour
+	c.Correlation.Grouping.Default = []string{"rule.id", "agent.id", "src_ip"}
 	c.Triage.LLMThreshold = 40
 	c.Triage.Mode = "rule-only"
 	return c
