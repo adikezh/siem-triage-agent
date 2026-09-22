@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -444,6 +445,17 @@ func serve(args []string) {
 		panic(err)
 	}
 	defer db.Close()
+	assets := map[string]enrich.Asset{}
+	if cfg.Enrichment.AssetsFile != "" {
+		if strings.HasSuffix(strings.ToLower(cfg.Enrichment.AssetsFile), ".csv") {
+			assets, err = enrich.LoadCSV(cfg.Enrichment.AssetsFile)
+		} else {
+			assets, err = enrich.Load(cfg.Enrichment.AssetsFile)
+		}
+		if err != nil {
+			panic(err)
+		}
+	}
 	apiKey := ""
 	if *apiKeyEnv != "" {
 		apiKey, err = auth.RequireKey(os.Getenv(*apiKeyEnv))
@@ -456,6 +468,7 @@ func serve(args []string) {
 		authHash = auth.HashKey(apiKey)
 	}
 	protectRoles := func(next http.Handler, allowed ...string) http.Handler {
+		next = httpapi.RateLimit(next, 120, time.Minute)
 		if authHash != "" {
 			return auth.MiddlewareHash(next, authHash)
 		}
@@ -552,6 +565,19 @@ func serve(args []string) {
 		}
 		w.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"total": len(rows), "by_severity": counts})
+	})))
+	http.Handle("/api/assets", protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		out := make([]enrich.Asset, 0, len(assets))
+		for _, asset := range assets {
+			out = append(out, asset)
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].IP < out[j].IP })
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(out)
 	})))
 	http.Handle("/api/suppressions", protectRoles(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
