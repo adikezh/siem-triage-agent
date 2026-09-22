@@ -17,6 +17,9 @@ type Config struct {
 		MaxIncidentAge   time.Duration `yaml:"max_incident_age"`
 		SuppressionsFile string        `yaml:"suppressions_file"`
 	} `yaml:"correlation"`
+	Enrichment struct {
+		AssetsFile string `yaml:"assets_file"`
+	} `yaml:"enrichment"`
 	Triage struct {
 		LLMThreshold int    `yaml:"llm_threshold"`
 		Mode         string `yaml:"mode"`

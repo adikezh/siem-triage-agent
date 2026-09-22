@@ -14,6 +14,7 @@ import (
 
 	"github.com/adikezh/siem-triage-agent/internal/auth"
 	"github.com/adikezh/siem-triage-agent/internal/config"
+	"github.com/adikezh/siem-triage-agent/internal/enrich"
 	"github.com/adikezh/siem-triage-agent/internal/metrics"
 	"github.com/adikezh/siem-triage-agent/internal/report"
 	"github.com/adikezh/siem-triage-agent/internal/rules"
@@ -100,6 +101,10 @@ func run(args []string) {
 	defer f.Close()
 	var alerts []Alert
 	seen := map[string]bool{}
+	assets, e := enrich.Load(cfg.Enrichment.AssetsFile)
+	if e != nil {
+		panic(e)
+	}
 	var suppressions []rules.Suppression
 	if cfg.Correlation.SuppressionsFile != "" {
 		suppressions, err = rules.Load(cfg.Correlation.SuppressionsFile)
@@ -130,6 +135,9 @@ func run(args []string) {
 				a.RuleLevel = 3
 			}
 			a.Tag = d.Tag
+		}
+		if asset, ok := enrich.Apply(assets, a.SrcIP); ok {
+			a.Criticality = asset.Criticality
 		}
 		alerts = append(alerts, a)
 	}

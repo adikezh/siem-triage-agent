@@ -9,3 +9,5 @@ correlation:
 triage:
   llm_threshold: 40
   mode: rule-only
+enrichment:
+  assets_file: configs/assets.example.yaml

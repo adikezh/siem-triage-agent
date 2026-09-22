@@ -1,0 +1,7 @@
+assets:
+  - ip: "10.0.0.10"
+    hostname: "db-prod-01"
+    owner: "soc"
+    environment: "prod"
+    criticality: 5
+    tags: ["database", "production"]
