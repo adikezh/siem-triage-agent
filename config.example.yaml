@@ -1,0 +1,10 @@
+server:
+  listen: ":8080"
+storage:
+  path: data/triage.db
+correlation:
+  window: 15m
+  max_incident_age: 6h
+triage:
+  llm_threshold: 40
+  mode: rule-only

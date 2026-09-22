@@ -2,13 +2,17 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/adikezh/siem-triage-agent/internal/store"
 )
 
 type Alert struct {
@@ -48,6 +52,7 @@ func run(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	file := fs.String("file", "", "NDJSON input")
 	out := fs.String("out", "", "JSON output")
+	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
 	fs.Parse(args)
 	if *file == "" {
 		fmt.Fprintln(os.Stderr, "--file is required")
@@ -77,6 +82,19 @@ func run(args []string) {
 	}
 	sortAlerts(alerts)
 	inc := group(alerts)
+	if err := os.MkdirAll(filepath.Dir(*dbPath), 0700); err != nil {
+		panic(err)
+	}
+	db, err := store.Open(*dbPath)
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	for _, i := range inc {
+		if err := db.SaveIncident(context.Background(), i, i.Fingerprint+"/"+i.FirstSeen.Format(time.RFC3339Nano), i.Fingerprint, i.Severity, i.Score, i.AlertCount, i.FirstSeen, i.LastSeen); err != nil {
+			panic(err)
+		}
+	}
 	b, _ := json.MarshalIndent(inc, "", "  ")
 	if *out != "" {
 		if e = os.WriteFile(*out, b, 0600); e != nil {
@@ -134,10 +152,55 @@ func severity(s int) string {
 func serve(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	addr := fs.String("listen", ":8080", "address")
+	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
 	fs.Parse(args)
+	db, err := store.Open(*dbPath)
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
 	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("content-type", "application/json")
 		fmt.Fprint(w, `{"status":"ok"}`)
+	})
+	http.HandleFunc("/api/incidents", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", 405)
+			return
+		}
+		records, e := db.ListIncidents(r.Context())
+		if e != nil {
+			http.Error(w, "storage error", 500)
+			return
+		}
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(records)
+	})
+	http.HandleFunc("/api/incidents/feedback", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var input struct {
+			IncidentID string `json:"incident_id"`
+			Verdict    string `json:"verdict"`
+			Comment    string `json:"comment"`
+			Actor      string `json:"actor"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil || input.IncidentID == "" {
+			http.Error(w, "invalid JSON: incident_id is required", http.StatusBadRequest)
+			return
+		}
+		if input.Verdict != "tp" && input.Verdict != "fp" && input.Verdict != "ack" {
+			http.Error(w, "verdict must be tp, fp or ack", http.StatusBadRequest)
+			return
+		}
+		if err := db.AddFeedback(r.Context(), input.IncidentID, input.Verdict, input.Comment, input.Actor); err != nil {
+			http.Error(w, "could not save feedback", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"status":"saved"}`))
 	})
 	fmt.Println("listening on", *addr)
 	if e := http.ListenAndServe(*addr, nil); e != nil {
