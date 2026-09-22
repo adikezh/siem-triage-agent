@@ -182,6 +182,47 @@ type LLMTrace struct {
 	Used                                           bool
 }
 
+type MetricsSnapshot struct {
+	LLMCalls, LLMUsed, LLMErrors        int
+	LLMLatencyMS                        float64
+	FeedbackTP, FeedbackFP, FeedbackAck int
+	OutboxPending, OutboxSent           int
+}
+
+func (s *Store) Metrics(ctx context.Context) (MetricsSnapshot, error) {
+	var m MetricsSnapshot
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*),COALESCE(SUM(CASE WHEN used=1 THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN error<>'' THEN 1 ELSE 0 END),0),COALESCE(AVG(CASE WHEN used=1 THEN latency_ms END),0) FROM llm_calls`).Scan(&m.LLMCalls, &m.LLMUsed, &m.LLMErrors, &m.LLMLatencyMS); err != nil {
+		return m, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT verdict,COUNT(*) FROM feedback GROUP BY verdict`)
+	if err != nil {
+		return m, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var verdict string
+		var count int
+		if err := rows.Scan(&verdict, &count); err != nil {
+			return m, err
+		}
+		switch verdict {
+		case "tp":
+			m.FeedbackTP = count
+		case "fp":
+			m.FeedbackFP = count
+		case "ack":
+			m.FeedbackAck = count
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return m, err
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END),0) FROM outbox`).Scan(&m.OutboxPending, &m.OutboxSent); err != nil {
+		return m, err
+	}
+	return m, nil
+}
+
 type Cursor struct {
 	Timestamp time.Time
 	SortJSON  []byte
