@@ -4,8 +4,8 @@
 - [ ] Wazuh/OpenSearch polling and restart proof.
 - [~] YAML config and suppression decisions are wired into offline ingest; persistent suppression audit chain and UI/DB-managed rules remain.
 - [ ] Asset/history/GeoIP/threat-intel enrichment.
-- [ ] Full scoring formula and table tests.
-- [ ] LLM providers, schema validation, retry/fallback, PII redaction and budget limits.
+- [x] Deterministic scoring formula and table tests (history-frequency input remains to be wired from feedback store).
+- [~] PII redaction library with positive tests; LLM providers, schema validation, retry/fallback and budget limits remain.
 - [ ] Telegram/Slack/webhook/IRIS/TheHive/Jira adapters.
 - [ ] Authenticated REST API, RBAC, UI and reports (demo read/feedback API exists; authentication is still pending).
 - [ ] Hosted CI, govulncheck, SBOM, load test and real SOC demo evidence.

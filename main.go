@@ -15,27 +15,37 @@ import (
 	"github.com/adikezh/siem-triage-agent/internal/config"
 	"github.com/adikezh/siem-triage-agent/internal/rules"
 	"github.com/adikezh/siem-triage-agent/internal/store"
+	"github.com/adikezh/siem-triage-agent/internal/triage/scoring"
 )
 
 type Alert struct {
-	ID        string         `json:"id"`
-	Timestamp time.Time      `json:"timestamp"`
-	RuleID    string         `json:"rule_id"`
-	RuleLevel int            `json:"rule_level"`
-	Agent     map[string]any `json:"agent"`
-	SrcIP     string         `json:"src_ip"`
-	Groups    []string       `json:"groups"`
-	RuleDesc  string         `json:"rule_description"`
-	Tag       string         `json:"tag,omitempty"`
+	ID               string         `json:"id"`
+	Timestamp        time.Time      `json:"timestamp"`
+	RuleID           string         `json:"rule_id"`
+	RuleLevel        int            `json:"rule_level"`
+	Agent            map[string]any `json:"agent"`
+	SrcIP            string         `json:"src_ip"`
+	Groups           []string       `json:"groups"`
+	RuleDesc         string         `json:"rule_description"`
+	Tag              string         `json:"tag,omitempty"`
+	Malicious        bool           `json:"threat_intel_malicious,omitempty"`
+	Internal         bool           `json:"internal_src,omitempty"`
+	Criticality      int            `json:"asset_criticality,omitempty"`
+	HighImpactTactic bool           `json:"high_impact_tactic,omitempty"`
 }
 type Incident struct {
-	Fingerprint string    `json:"fingerprint"`
-	FirstSeen   time.Time `json:"first_seen"`
-	LastSeen    time.Time `json:"last_seen"`
-	AlertCount  int       `json:"alert_count"`
-	Score       int       `json:"score"`
-	Severity    string    `json:"severity"`
-	Tags        []string  `json:"tags,omitempty"`
+	Fingerprint      string    `json:"fingerprint"`
+	FirstSeen        time.Time `json:"first_seen"`
+	LastSeen         time.Time `json:"last_seen"`
+	AlertCount       int       `json:"alert_count"`
+	Score            int       `json:"score"`
+	Severity         string    `json:"severity"`
+	Tags             []string  `json:"tags,omitempty"`
+	RuleLevel        int       `json:"rule_level"`
+	Malicious        bool      `json:"malicious,omitempty"`
+	Internal         bool      `json:"internal_whitelist,omitempty"`
+	Criticality      int       `json:"criticality,omitempty"`
+	HighImpactTactic bool      `json:"high_impact_tactic,omitempty"`
 }
 
 func main() {
@@ -156,7 +166,8 @@ func groupWithWindow(as []Alert, window, maxAge time.Duration) []Incident {
 		fp := a.RuleID + "|" + agent + "|" + a.SrcIP
 		i, ok := m[fp]
 		if !ok || a.Timestamp.Sub(out[i].LastSeen) > window || a.Timestamp.Sub(out[i].FirstSeen) > maxAge {
-			inc := Incident{Fingerprint: fp, FirstSeen: a.Timestamp, LastSeen: a.Timestamp, AlertCount: 1, Score: score(a.RuleLevel), Severity: severity(score(a.RuleLevel))}
+			s := scoring.Score(scoring.Input{RuleLevel: a.RuleLevel, Malicious: a.Malicious, Criticality: a.Criticality, HighImpactTactic: a.HighImpactTactic, InternalWhitelist: a.Internal})
+			inc := Incident{Fingerprint: fp, FirstSeen: a.Timestamp, LastSeen: a.Timestamp, AlertCount: 1, RuleLevel: a.RuleLevel, Malicious: a.Malicious, Internal: a.Internal, Criticality: a.Criticality, HighImpactTactic: a.HighImpactTactic, Score: s, Severity: scoring.Severity(s)}
 			if a.Tag != "" {
 				inc.Tags = []string{a.Tag}
 			}
@@ -165,6 +176,24 @@ func groupWithWindow(as []Alert, window, maxAge time.Duration) []Incident {
 		} else {
 			out[i].LastSeen = a.Timestamp
 			out[i].AlertCount++
+			if a.RuleLevel > out[i].RuleLevel {
+				out[i].RuleLevel = a.RuleLevel
+			}
+			if a.Malicious {
+				out[i].Malicious = true
+			}
+			if a.Internal {
+				out[i].Internal = true
+			}
+			if a.Criticality > out[i].Criticality {
+				out[i].Criticality = a.Criticality
+			}
+			if a.HighImpactTactic {
+				out[i].HighImpactTactic = true
+			}
+			s := scoring.Score(scoring.Input{RuleLevel: out[i].RuleLevel, Malicious: out[i].Malicious, Criticality: out[i].Criticality, HighImpactTactic: out[i].HighImpactTactic, InternalWhitelist: out[i].Internal})
+			out[i].Score = s
+			out[i].Severity = scoring.Severity(s)
 			if a.Tag != "" {
 				found := false
 				for _, tag := range out[i].Tags {
@@ -181,23 +210,10 @@ func groupWithWindow(as []Alert, window, maxAge time.Duration) []Incident {
 	return out
 }
 func score(level int) int {
-	s := level * 5
-	if s > 100 {
-		return 100
-	}
-	return s
+	return scoring.Score(scoring.Input{RuleLevel: level})
 }
 func severity(s int) string {
-	if s >= 80 {
-		return "critical"
-	}
-	if s >= 60 {
-		return "high"
-	}
-	if s >= 40 {
-		return "medium"
-	}
-	return "low"
+	return scoring.Severity(s)
 }
 func serve(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
