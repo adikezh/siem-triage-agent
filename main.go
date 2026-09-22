@@ -66,6 +66,9 @@ type Incident struct {
 	Internal         bool      `json:"internal_whitelist,omitempty"`
 	Criticality      int       `json:"criticality,omitempty"`
 	HighImpactTactic bool      `json:"high_impact_tactic,omitempty"`
+	Summary          string    `json:"summary,omitempty"`
+	Actions          []string  `json:"actions,omitempty"`
+	FPProbability    float64   `json:"fp_probability,omitempty"`
 }
 
 func main() {
@@ -591,6 +594,7 @@ func serve(args []string) {
 			panic("slack signing secret environment variable is empty")
 		}
 	}
+	engine := configuredEngine(cfg)
 	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("content-type", "application/json")
 		fmt.Fprint(w, `{"status":"ok"}`)
@@ -769,7 +773,7 @@ func serve(args []string) {
 		if *webhookURL != "" {
 			sender = notify.Webhook{URL: *webhookURL, Secret: webhookSecret}
 		}
-		go pollWazuh(context.Background(), db, ingest.WazuhClient{BaseURL: *sourceURL, Index: *sourceIndex, Username: *sourceUser, Password: password}, *sourceInterval, cfg.Correlation.Window, cfg.Correlation.MaxIncidentAge, cfg.Correlation.Grouping, assets, iocs, sender, cfg.Correlation.SuppressionsFile)
+		go pollWazuh(context.Background(), db, ingest.WazuhClient{BaseURL: *sourceURL, Index: *sourceIndex, Username: *sourceUser, Password: password}, *sourceInterval, cfg.Correlation.Window, cfg.Correlation.MaxIncidentAge, cfg.Correlation.Grouping, assets, iocs, engine, sender, cfg.Correlation.SuppressionsFile)
 	}
 	fmt.Println("listening on", *addr)
 	if (*tlsCert == "") != (*tlsKey == "") {
@@ -786,7 +790,32 @@ func serve(args []string) {
 	}
 }
 
-func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, interval, correlationWindow, maxIncidentAge time.Duration, grouping config.Grouping, assets map[string]enrich.Asset, iocs enrich.IOC, sender pipeline.Sender, suppressionFile string) {
+func configuredEngine(cfg config.Config) *triageengine.Engine {
+	if cfg.Triage.Mode == "rule-only" || len(cfg.Triage.Providers) == 0 {
+		return nil
+	}
+	providers := make([]llm.Provider, 0, len(cfg.Triage.Providers))
+	model := cfg.Triage.Providers[0].Model
+	for _, p := range cfg.Triage.Providers {
+		key := os.Getenv(p.APIKeyEnv)
+		var provider llm.Provider
+		switch strings.ToLower(p.Type) {
+		case "openai_compatible", "openai-compatible":
+			provider = llm.OpenAICompatible{BaseURL: p.BaseURL, APIKey: key}
+		case "ollama":
+			provider = llm.Ollama{BaseURL: p.BaseURL}
+		case "anthropic":
+			provider = llm.Anthropic{BaseURL: p.BaseURL, APIKey: key}
+		default:
+			panic("unsupported configured LLM provider: " + p.Type)
+		}
+		providers = append(providers, provider)
+	}
+	budget := &llm.Budget{CallsPerHour: cfg.Triage.Budget.CallsPerHour, USDPerDay: cfg.Triage.Budget.USDPerDay, CostPerCall: cfg.Triage.Budget.CostPerCall}
+	return &triageengine.Engine{Threshold: cfg.Triage.LLMThreshold, Provider: llm.ChainProvider{Chain: llm.Chain{Providers: providers, Budget: budget}}, Model: model, InternalCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"}}
+}
+
+func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, interval, correlationWindow, maxIncidentAge time.Duration, grouping config.Grouping, assets map[string]enrich.Asset, iocs enrich.IOC, engine *triageengine.Engine, sender pipeline.Sender, suppressionFile string) {
 	const sourceName = "wazuh-live"
 	saved, err := db.LoadCursor(ctx, sourceName)
 	if err != nil {
@@ -855,6 +884,33 @@ func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, 
 					incident.Severity = scoring.Severity(incident.Score)
 					id = previous.ID
 				}
+			}
+			if engine != nil {
+				historyRows, historyErr := db.IncidentHistory(ctx, incident.Fingerprint, 5)
+				if historyErr != nil {
+					fmt.Fprintln(os.Stderr, "incident history:", historyErr)
+					return
+				}
+				historyParts := make([]string, 0, len(historyRows))
+				for _, h := range historyRows {
+					historyParts = append(historyParts, h.LastSeen+":"+h.Severity+":"+h.Verdict)
+				}
+				parts := strings.Split(incident.Fingerprint, "|")
+				sourceIP := ""
+				if len(parts) > 0 {
+					sourceIP = parts[len(parts)-1]
+				}
+				result := engine.Analyze(ctx, triageengine.Case{
+					Rule:         scoring.Input{RuleLevel: incident.RuleLevel, Malicious: incident.Malicious, Criticality: incident.Criticality, HighImpactTactic: incident.HighImpactTactic, InternalWhitelist: incident.Internal},
+					RuleSeverity: incident.Severity,
+					Prompt:       llm.PromptInput{Rule: incident.Fingerprint, Description: "live correlated SIEM incident", SourceIP: sourceIP, History: strings.Join(historyParts, "; ")},
+				})
+				incident.Score = result.Score
+				incident.Severity = result.Severity
+				incident.Summary = result.Summary
+				incident.Actions = result.Actions
+				incident.FPProbability = result.FPProbability
+				_ = db.SaveLLMTrace(ctx, store.LLMTrace{IncidentID: id, Provider: result.Trace.Provider, Model: result.Trace.Model, PromptHash: result.Trace.PromptHash, LatencyMS: result.Trace.LatencyMS, Used: result.Trace.Used, Error: result.Trace.Error})
 			}
 			if err := db.SaveIncident(ctx, incident, id, incident.Fingerprint, incident.Severity, incident.Score, incident.AlertCount, incident.FirstSeen, incident.LastSeen); err != nil {
 				fmt.Fprintln(os.Stderr, "save incident:", err)

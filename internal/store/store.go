@@ -295,6 +295,23 @@ func (s *Store) SaveLLMTrace(ctx context.Context, t LLMTrace) error {
 	return err
 }
 
+func (s *Store) ListLLMTraces(ctx context.Context) ([]LLMTrace, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT incident_id,provider,model,prompt_hash,latency_ms,used,error FROM llm_calls ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []LLMTrace
+	for rows.Next() {
+		var t LLMTrace
+		if err := rows.Scan(&t.IncidentID, &t.Provider, &t.Model, &t.PromptHash, &t.LatencyMS, &t.Used, &t.Error); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) Prune(ctx context.Context, alertBefore, llmBefore time.Time) error {
 	if !alertBefore.IsZero() {
 		if _, err := s.db.ExecContext(ctx, `DELETE FROM alerts WHERE timestamp<?`, alertBefore.UTC().Format(time.RFC3339Nano)); err != nil {

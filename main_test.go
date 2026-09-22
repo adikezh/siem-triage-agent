@@ -12,6 +12,8 @@ import (
 	"github.com/adikezh/siem-triage-agent/internal/enrich"
 	"github.com/adikezh/siem-triage-agent/internal/ingest"
 	"github.com/adikezh/siem-triage-agent/internal/store"
+	triageengine "github.com/adikezh/siem-triage-agent/internal/triage"
+	"github.com/adikezh/siem-triage-agent/internal/triage/llm"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -103,7 +105,7 @@ func TestPollWazuhPersistsAlertAndIncident(t *testing.T) {
 	defer db.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go pollWazuh(ctx, db, ingest.WazuhClient{BaseURL: srv.URL, Index: "alerts-*"}, time.Hour, 15*time.Minute, 6*time.Hour, config.Grouping{Default: []string{"rule.id", "agent.id", "src_ip"}}, map[string]enrich.Asset{"203.0.113.8": {IP: "203.0.113.8", Criticality: 5}}, enrich.IOC{IPs: map[string]bool{"203.0.113.8": true}}, nil, "")
+	go pollWazuh(ctx, db, ingest.WazuhClient{BaseURL: srv.URL, Index: "alerts-*"}, time.Hour, 15*time.Minute, 6*time.Hour, config.Grouping{Default: []string{"rule.id", "agent.id", "src_ip"}}, map[string]enrich.Asset{"203.0.113.8": {IP: "203.0.113.8", Criticality: 5}}, enrich.IOC{IPs: map[string]bool{"203.0.113.8": true}}, nil, nil, "")
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		rows, e := db.ListIncidents(ctx)
@@ -115,6 +117,45 @@ func TestPollWazuhPersistsAlertAndIncident(t *testing.T) {
 	}
 	rows, _ := db.ListIncidents(ctx)
 	t.Fatalf("poller did not persist expected incident: %#v", rows)
+}
+
+type liveTestProvider struct{}
+
+func (liveTestProvider) Name() string { return "live-test" }
+func (liveTestProvider) Complete(context.Context, llm.Request) (llm.Response, error) {
+	return llm.Response{Severity: "high", Summary: "provider summary", Actions: []string{"investigate"}, FPProbability: 0.1}, nil
+}
+
+func TestPollWazuhRunsConfiguredEngine(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"hits":{"hits":[{"_id":"live-llm-1","_source":{"@timestamp":"2026-09-23T08:00:00Z","rule":{"id":"100","level":8,"description":"test","groups":["authentication_failed"]},"agent":{"id":"a1"},"data":{"srcip":"203.0.113.8"}},"sort":["2026-09-23T08:00:00Z","live-llm-1"]}]}}`))
+	}))
+	defer srv.Close()
+	db, err := store.Open(filepath.Join(t.TempDir(), "live-llm.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	engine := &triageengine.Engine{Threshold: 1, Provider: liveTestProvider{}, Model: "test", InternalCIDRs: []string{}}
+	go pollWazuh(ctx, db, ingest.WazuhClient{BaseURL: srv.URL, Index: "alerts-*"}, time.Hour, 15*time.Minute, 6*time.Hour, config.Grouping{Default: []string{"rule.id", "agent.id", "src_ip"}}, nil, enrich.IOC{}, engine, nil, "")
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		rows, e := db.ListIncidents(ctx)
+		if e == nil && len(rows) == 1 {
+			var payload Incident
+			if json.Unmarshal(rows[0].Payload, &payload) == nil && payload.Summary == "provider summary" && len(payload.Actions) == 1 {
+				traces, traceErr := db.ListLLMTraces(ctx)
+				if traceErr == nil && len(traces) > 0 && traces[0].Provider == "live-test" {
+					cancel()
+					return
+				}
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("live provider result or trace was not persisted")
 }
 
 func TestScenarioFixtures(t *testing.T) {
