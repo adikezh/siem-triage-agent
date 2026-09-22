@@ -1,8 +1,10 @@
 package web
 
 import (
+	"encoding/json"
 	"html/template"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -14,7 +16,7 @@ import (
 var page = template.Must(template.New("dashboard").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>SIEM Triage</title><style>body{font:16px system-ui;margin:2rem;background:#f6f7f9;color:#18212b}main{max-width:1100px;margin:auto}table,.card{width:100%;background:white;border-collapse:collapse;padding:1rem}.card{box-sizing:border-box}th,td{padding:.7rem;border-bottom:1px solid #ddd;text-align:left}.severity{font-weight:700}.actions{display:flex;gap:.5rem;margin:1rem 0}button{padding:.5rem .8rem}pre{white-space:pre-wrap;overflow:auto;background:#f0f2f5;padding:1rem}.filters{background:white;padding:1rem;margin:1rem 0}</style></head><body><main><h1>SIEM Triage</h1><p><a href="/">Incidents</a> · <a href="/stats">Dashboard</a> · <a href="/suppressions">Suppressions</a> · <a href="/assets">Assets</a></p>{{if .Detail}}<section class="card"><h2>{{.Detail.Severity}} — {{.Detail.ID}}</h2><p><b>Fingerprint:</b> {{.Detail.Fingerprint}}</p><p><b>Score:</b> {{.Detail.Score}} &nbsp; <b>Alerts:</b> {{.Detail.AlertCount}}</p><p><b>First seen:</b> {{.Detail.FirstSeen}}<br><b>Last seen:</b> {{.Detail.LastSeen}}</p><div class="actions"><form method="post" action="/incidents/{{.Detail.ID}}/feedback"><button name="verdict" value="tp">✅ TP</button><button name="verdict" value="fp">❌ FP</button><button name="verdict" value="ack">👁 Ack</button></form></div><h3>Incident payload / timeline</h3><pre>{{.Detail.Payload}}</pre></section>{{else}}<section class="filters"><form method="get" action="/"><label>Severity <select name="severity"><option value="">all</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="critical">critical</option></select></label> <label>Since <input name="since" placeholder="2026-09-23T00:00:00Z"></label> <label>Limit <input name="limit" type="number" min="1" max="1000"></label> <button>Filter</button></form><p>Total shown: {{len .Rows}} | Low: {{index .Counts "low"}} | Medium: {{index .Counts "medium"}} | High: {{index .Counts "high"}} | Critical: {{index .Counts "critical"}}</p></section>{{if .Rows}}<table><thead><tr><th>Fingerprint</th><th>Severity</th><th>Score</th><th>Alerts</th><th>Last seen</th></tr></thead><tbody>{{range .Rows}}<tr><td><a href="/incidents/{{.ID}}">{{.Fingerprint}}</a></td><td class="severity">{{.Severity}}</td><td>{{.Severity}}</td><td>{{.Score}}</td><td>{{.AlertCount}}</td><td>{{.LastSeen}}</td></tr>{{end}}</tbody></table>{{else}}<p>No incidents yet.</p>{{end}}{{end}}</main></body></html>`))
 var suppressionsPage = template.Must(template.New("suppressions").Parse(`<!doctype html><html><body><main><h1>Suppressions</h1><p><a href="/">Incidents</a> · <a href="/assets">Assets</a></p><table><tr><th>Fingerprint</th><th>Action</th><th>Reason</th><th>Expires</th><th>Created by</th></tr>{{range .Suppressions}}<tr><td>{{.Fingerprint}}</td><td>{{.Action}}</td><td>{{.Reason}}</td><td>{{.ExpiresAt}}</td><td>{{.CreatedBy}}</td></tr>{{else}}<tr><td colspan="5">No suppressions.</td></tr>{{end}}</table></main></body></html>`))
 var assetsPage = template.Must(template.New("assets").Parse(`<!doctype html><html><body><main><h1>Assets</h1><p><a href="/">Incidents</a> · <a href="/suppressions">Suppressions</a></p><table><tr><th>IP</th><th>Hostname</th><th>Owner</th><th>Environment</th><th>Criticality</th><th>Tags</th></tr>{{range .Assets}}<tr><td>{{.IP}}</td><td>{{.Hostname}}</td><td>{{.Owner}}</td><td>{{.Environment}}</td><td>{{.Criticality}}</td><td>{{.Tags}}</td></tr>{{else}}<tr><td colspan="6">No assets configured.</td></tr>{{end}}</table></main></body></html>`))
-var statsPage = template.Must(template.New("stats").Parse(`<!doctype html><html><body><main><h1>Dashboard</h1><p><a href="/">Incidents</a> · <a href="/suppressions">Suppressions</a> · <a href="/assets">Assets</a></p><section class="card"><h2>Incidents</h2><p>Total: {{.Total}}</p><table><tr><th>Severity</th><th>Count</th></tr>{{range .Severity}}<tr><td>{{.Name}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section class="card"><h2>Feedback</h2><p>TP: {{.Metrics.FeedbackTP}} · FP: {{.Metrics.FeedbackFP}} · Ack: {{.Metrics.FeedbackAck}} · FP rate: {{printf "%.1f" .FPPercent}}%</p></section><section class="card"><h2>LLM and delivery</h2><p>Calls: {{.Metrics.LLMCalls}} · Used: {{.Metrics.LLMUsed}} · Errors: {{.Metrics.LLMErrors}} · Average latency: {{printf "%.0f" .Metrics.LLMLatencyMS}} ms</p><p>Outbox pending: {{.Metrics.OutboxPending}} · Sent: {{.Metrics.OutboxSent}}</p></section></main></body></html>`))
+var statsPage = template.Must(template.New("stats").Parse(`<!doctype html><html><body><main><h1>Dashboard</h1><p><a href="/">Incidents</a> · <a href="/suppressions">Suppressions</a> · <a href="/assets">Assets</a></p><section class="card"><h2>Incidents</h2><p>Total: {{.Total}}</p><table><tr><th>Severity</th><th>Count</th></tr>{{range .Severity}}<tr><td>{{.Name}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section class="card"><h2>Top source IPs</h2><table><tr><th>Source IP</th><th>Incidents</th></tr>{{range .TopSrcIP}}<tr><td>{{.Name}}</td><td>{{.Count}}</td></tr>{{else}}<tr><td colspan="2">No source IP data.</td></tr>{{end}}</table><h2>MITRE tactics</h2><table><tr><th>Tactic</th><th>Incidents</th></tr>{{range .TopMITRE}}<tr><td>{{.Name}}</td><td>{{.Count}}</td></tr>{{else}}<tr><td colspan="2">No MITRE data.</td></tr>{{end}}</table></section><section class="card"><h2>Feedback</h2><p>TP: {{.Metrics.FeedbackTP}} · FP: {{.Metrics.FeedbackFP}} · Ack: {{.Metrics.FeedbackAck}} · FP rate: {{printf "%.1f" .FPPercent}}%</p><p>MTTA: {{printf "%.0f" .Metrics.MTTASeconds}} seconds</p></section><section class="card"><h2>LLM and delivery</h2><p>Calls: {{.Metrics.LLMCalls}} · Used: {{.Metrics.LLMUsed}} · Errors: {{.Metrics.LLMErrors}} · Average latency: {{printf "%.0f" .Metrics.LLMLatencyMS}} ms</p><p>Outbox pending: {{.Metrics.OutboxPending}} · Sent: {{.Metrics.OutboxSent}}</p></section></main></body></html>`))
 
 type viewModel struct {
 	Rows         []store.Record
@@ -26,11 +28,35 @@ type viewModel struct {
 	Severity     []severityCount
 	Metrics      store.MetricsSnapshot
 	FPPercent    float64
+	TopSrcIP     []countItem
+	TopMITRE     []countItem
 }
 
 type severityCount struct {
 	Name  string
 	Count int
+}
+
+type countItem struct {
+	Name  string
+	Count int
+}
+
+func topCounts(values map[string]int, limit int) []countItem {
+	out := make([]countItem, 0, len(values))
+	for name, count := range values {
+		out = append(out, countItem{Name: name, Count: count})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count == out[j].Count {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Count > out[j].Count
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }
 
 func Handler(s *store.Store) http.Handler {
@@ -52,8 +78,22 @@ func HandlerWithAssets(s *store.Store, configuredAssets map[string]enrich.Asset)
 				return
 			}
 			counts := map[string]int{}
+			srcIPs := map[string]int{}
+			tactics := map[string]int{}
 			for _, row := range rows {
 				counts[row.Severity]++
+				var incident struct {
+					SrcIP        string   `json:"src_ip"`
+					MITRETactics []string `json:"mitre_tactics"`
+				}
+				if json.Unmarshal(row.Payload, &incident) == nil {
+					if incident.SrcIP != "" {
+						srcIPs[incident.SrcIP]++
+					}
+					for _, tactic := range incident.MITRETactics {
+						tactics[tactic]++
+					}
+				}
 			}
 			severity := make([]severityCount, 0, 4)
 			for _, name := range []string{"low", "medium", "high", "critical"} {
@@ -65,7 +105,7 @@ func HandlerWithAssets(s *store.Store, configuredAssets map[string]enrich.Asset)
 				fpPercent = float64(metrics.FeedbackFP) * 100 / float64(feedbackTotal)
 			}
 			w.Header().Set("content-type", "text/html; charset=utf-8")
-			_ = statsPage.Execute(w, viewModel{Total: len(rows), Severity: severity, Metrics: metrics, FPPercent: fpPercent})
+			_ = statsPage.Execute(w, viewModel{Total: len(rows), Severity: severity, Metrics: metrics, FPPercent: fpPercent, TopSrcIP: topCounts(srcIPs, 10), TopMITRE: topCounts(tactics, 10)})
 			return
 		}
 		if r.Method == http.MethodGet && r.URL.Path == "/suppressions" {

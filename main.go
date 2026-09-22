@@ -50,6 +50,8 @@ type Alert struct {
 	Agent            map[string]any `json:"agent"`
 	SrcIP            string         `json:"src_ip"`
 	Groups           []string       `json:"groups"`
+	MITRETactics     []string       `json:"mitre_tactics,omitempty"`
+	MITRETechniques  []string       `json:"mitre_techniques,omitempty"`
 	RuleDesc         string         `json:"rule_description"`
 	Tag              string         `json:"tag,omitempty"`
 	Malicious        bool           `json:"threat_intel_malicious,omitempty"`
@@ -70,6 +72,8 @@ type Incident struct {
 	Internal         bool      `json:"internal_whitelist,omitempty"`
 	Criticality      int       `json:"criticality,omitempty"`
 	HighImpactTactic bool      `json:"high_impact_tactic,omitempty"`
+	SrcIP            string    `json:"src_ip,omitempty"`
+	MITRETactics     []string  `json:"mitre_tactics,omitempty"`
 	Summary          string    `json:"summary,omitempty"`
 	Actions          []string  `json:"actions,omitempty"`
 	FPProbability    float64   `json:"fp_probability,omitempty"`
@@ -517,7 +521,7 @@ func groupWithWindowConfig(as []Alert, window, maxAge time.Duration, grouping co
 		i, ok := m[fp]
 		if !ok || a.Timestamp.Sub(out[i].LastSeen) > window || a.Timestamp.Sub(out[i].FirstSeen) > maxAge {
 			s := scoring.Score(scoring.Input{RuleLevel: a.RuleLevel, Malicious: a.Malicious, Criticality: a.Criticality, HighImpactTactic: a.HighImpactTactic, InternalWhitelist: a.Internal})
-			inc := Incident{Fingerprint: fp, FirstSeen: a.Timestamp, LastSeen: a.Timestamp, AlertCount: 1, RuleLevel: a.RuleLevel, Malicious: a.Malicious, Internal: a.Internal, Criticality: a.Criticality, HighImpactTactic: a.HighImpactTactic, Score: s, Severity: scoring.Severity(s)}
+			inc := Incident{Fingerprint: fp, FirstSeen: a.Timestamp, LastSeen: a.Timestamp, AlertCount: 1, RuleLevel: a.RuleLevel, Malicious: a.Malicious, Internal: a.Internal, Criticality: a.Criticality, HighImpactTactic: a.HighImpactTactic, SrcIP: a.SrcIP, MITRETactics: append([]string(nil), a.MITRETactics...), Score: s, Severity: scoring.Severity(s)}
 			if a.Tag != "" {
 				inc.Tags = []string{a.Tag}
 			}
@@ -540,6 +544,21 @@ func groupWithWindowConfig(as []Alert, window, maxAge time.Duration, grouping co
 			}
 			if a.HighImpactTactic {
 				out[i].HighImpactTactic = true
+			}
+			if out[i].SrcIP == "" {
+				out[i].SrcIP = a.SrcIP
+			}
+			for _, tactic := range a.MITRETactics {
+				found := false
+				for _, existing := range out[i].MITRETactics {
+					if existing == tactic {
+						found = true
+						break
+					}
+				}
+				if !found {
+					out[i].MITRETactics = append(out[i].MITRETactics, tactic)
+				}
 			}
 			s := scoring.Score(scoring.Input{RuleLevel: out[i].RuleLevel, Malicious: out[i].Malicious, Criticality: out[i].Criticality, HighImpactTactic: out[i].HighImpactTactic, InternalWhitelist: out[i].Internal})
 			out[i].Score = s
@@ -729,8 +748,19 @@ func serve(args []string) {
 			return
 		}
 		counts := map[string]int{}
+		srcIPs := map[string]int{}
+		tactics := map[string]int{}
 		for _, x := range rows {
 			counts[x.Severity]++
+			var incident Incident
+			if json.Unmarshal(x.Payload, &incident) == nil {
+				if incident.SrcIP != "" {
+					srcIPs[incident.SrcIP]++
+				}
+				for _, tactic := range incident.MITRETactics {
+					tactics[tactic]++
+				}
+			}
 		}
 		m, metricsErr := db.Metrics(r.Context())
 		if metricsErr != nil {
@@ -744,11 +774,14 @@ func serve(args []string) {
 		}
 		w.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"total":       len(rows),
-			"by_severity": counts,
-			"feedback":    map[string]any{"tp": m.FeedbackTP, "fp": m.FeedbackFP, "ack": m.FeedbackAck, "fp_rate": fpRate},
-			"llm":         map[string]any{"calls": m.LLMCalls, "used": m.LLMUsed, "errors": m.LLMErrors, "avg_latency_ms": m.LLMLatencyMS},
-			"outbox":      map[string]any{"pending": m.OutboxPending, "sent": m.OutboxSent},
+			"total":        len(rows),
+			"by_severity":  counts,
+			"top_src_ip":   topCounts(srcIPs, 10),
+			"top_mitre":    topCounts(tactics, 10),
+			"mtta_seconds": m.MTTASeconds,
+			"feedback":     map[string]any{"tp": m.FeedbackTP, "fp": m.FeedbackFP, "ack": m.FeedbackAck, "fp_rate": fpRate},
+			"llm":          map[string]any{"calls": m.LLMCalls, "used": m.LLMUsed, "errors": m.LLMErrors, "avg_latency_ms": m.LLMLatencyMS},
+			"outbox":       map[string]any{"pending": m.OutboxPending, "sent": m.OutboxSent},
 		})
 	})))
 	http.Handle("/api/assets", protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -905,6 +938,28 @@ func serve(args []string) {
 	if e != nil && !errors.Is(e, http.ErrServerClosed) {
 		panic(e)
 	}
+}
+
+type countItem struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+func topCounts(values map[string]int, limit int) []countItem {
+	out := make([]countItem, 0, len(values))
+	for name, count := range values {
+		out = append(out, countItem{Name: name, Count: count})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count == out[j].Count {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Count > out[j].Count
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }
 
 func configuredEngine(cfg config.Config) *triageengine.Engine {

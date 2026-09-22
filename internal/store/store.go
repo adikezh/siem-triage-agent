@@ -190,6 +190,7 @@ type MetricsSnapshot struct {
 	LLMLatencyMS                        float64
 	FeedbackTP, FeedbackFP, FeedbackAck int
 	OutboxPending, OutboxSent           int
+	MTTASeconds                         float64
 }
 
 func (s *Store) Metrics(ctx context.Context) (MetricsSnapshot, error) {
@@ -221,6 +222,9 @@ func (s *Store) Metrics(ctx context.Context) (MetricsSnapshot, error) {
 		return m, err
 	}
 	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END),0) FROM outbox`).Scan(&m.OutboxPending, &m.OutboxSent); err != nil {
+		return m, err
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(AVG((julianday(f.created_at)-julianday(i.first_seen))*86400),0) FROM feedback f JOIN incidents i ON i.id=f.incident_id WHERE f.verdict IN ('tp','fp')`).Scan(&m.MTTASeconds); err != nil {
 		return m, err
 	}
 	return m, nil

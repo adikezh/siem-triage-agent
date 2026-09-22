@@ -19,7 +19,7 @@ func TestDashboard(t *testing.T) {
 	}
 	defer s.Close()
 	n := time.Now()
-	_ = s.SaveIncident(context.Background(), map[string]string{}, "i", "rule|agent|ip", "high", 70, 2, n, n)
+	_ = s.SaveIncident(context.Background(), map[string]any{"src_ip": "203.0.113.10", "mitre_tactics": []string{"Credential Access"}}, "i", "rule|agent|ip", "high", 70, 2, n, n)
 	r := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
 	Handler(s).ServeHTTP(w, r)
@@ -29,7 +29,7 @@ func TestDashboard(t *testing.T) {
 	r = httptest.NewRequest("GET", "/stats", nil)
 	w = httptest.NewRecorder()
 	Handler(s).ServeHTTP(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Dashboard") || !strings.Contains(w.Body.String(), "Total: 1") || !strings.Contains(w.Body.String(), "high") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Dashboard") || !strings.Contains(w.Body.String(), "Total: 1") || !strings.Contains(w.Body.String(), "203.0.113.10") || !strings.Contains(w.Body.String(), "Credential Access") {
 		t.Fatalf("stats dashboard %d %s", w.Code, w.Body.String())
 	}
 	r = httptest.NewRequest("GET", "/?severity=low", nil)

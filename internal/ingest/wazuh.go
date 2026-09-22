@@ -124,6 +124,14 @@ func NormalizeHit(h Hit) map[string]any {
 		if g, ok := rule["groups"]; ok {
 			out["groups"] = g
 		}
+		if mitre, ok := rule["mitre"].(map[string]any); ok {
+			if tactics, ok := mitre["tactic"]; ok {
+				out["mitre_tactics"] = tactics
+			}
+			if techniques, ok := mitre["technique"]; ok {
+				out["mitre_techniques"] = techniques
+			}
+		}
 	}
 	if agent, ok := h.Source["agent"].(map[string]any); ok {
 		out["agent"] = agent

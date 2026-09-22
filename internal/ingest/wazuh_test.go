@@ -38,7 +38,7 @@ func TestWazuhSearchAfterAndCursor(t *testing.T) {
 
 func TestNormalizeHitMapsWazuhDataFields(t *testing.T) {
 	h := Hit{ID: "x", Timestamp: time.Now(), Source: map[string]any{
-		"rule":  map[string]any{"id": "100", "level": 8, "groups": []any{"authentication_failed"}},
+		"rule":  map[string]any{"id": "100", "level": 8, "groups": []any{"authentication_failed"}, "mitre": map[string]any{"tactic": []any{"Credential Access"}, "technique": []any{"T1110"}}},
 		"agent": map[string]any{"id": "a1"},
 		"data":  map[string]any{"srcip": "203.0.113.8", "dstip": "10.0.0.2"},
 	}}
@@ -48,5 +48,8 @@ func TestNormalizeHitMapsWazuhDataFields(t *testing.T) {
 	}
 	if _, ok := got["srcip"]; ok {
 		t.Fatalf("legacy srcip key leaked into normalized model: %#v", got)
+	}
+	if got["mitre_tactics"] == nil || got["mitre_techniques"] == nil {
+		t.Fatalf("MITRE fields were not normalized: %#v", got)
 	}
 }
