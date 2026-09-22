@@ -69,6 +69,12 @@ func main() {
 		serve(os.Args[2:])
 	case "report":
 		reportCommand(os.Args[2:])
+	case "rules":
+		if len(os.Args) > 2 && os.Args[2] == "test" {
+			run(os.Args[3:])
+		} else {
+			usage()
+		}
 	default:
 		usage()
 	}
@@ -378,7 +384,7 @@ func serve(args []string) {
 	}
 }
 func usage() {
-	fmt.Println("triage run --file alerts.ndjson [--out report.json]\ntriage serve [--listen :8080]\ntriage report --db data/triage.db --period 7d --out weekly.md\ntriage version")
+	fmt.Println("triage run --file alerts.ndjson [--out report.json]\ntriage rules test --file alerts.ndjson --config config.yaml\ntriage serve [--listen :8080]\ntriage report --db data/triage.db --period 7d --out weekly.md\ntriage version")
 }
 
 func reportCommand(args []string) {
