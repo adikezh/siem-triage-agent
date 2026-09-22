@@ -40,10 +40,12 @@ nfpms:
 dockers:
   - image_templates:
       - ghcr.io/adikezh/siem-triage-agent:{{ .Tag }}-amd64
+    dockerfile: Dockerfile.release
     build_flag_templates: ["--platform=linux/amd64"]
     use: buildx
   - image_templates:
       - ghcr.io/adikezh/siem-triage-agent:{{ .Tag }}-arm64
+    dockerfile: Dockerfile.release
     build_flag_templates: ["--platform=linux/arm64"]
     use: buildx
 docker_manifests:
