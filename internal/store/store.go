@@ -44,6 +44,14 @@ type APIKeyRecord struct {
 	Name, Role, Hash, CreatedAt string
 }
 
+type APIKeyInfo struct {
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Role      string `json:"role"`
+	CreatedAt string `json:"created_at"`
+	RevokedAt string `json:"revoked_at,omitempty"`
+}
+
 func (s *Store) SaveAlert(ctx context.Context, id, source string, timestamp time.Time, payload any) error {
 	b, e := json.Marshal(payload)
 	if e != nil {
@@ -116,6 +124,28 @@ func (s *Store) VerifyAPIKey(ctx context.Context, raw string) (string, bool, err
 		return "", false, err
 	}
 	return role, true, nil
+}
+
+func (s *Store) RevokeAPIKey(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE api_keys SET revoked_at=? WHERE id=? AND revoked_at IS NULL`, time.Now().UTC().Format(time.RFC3339Nano), id)
+	return err
+}
+
+func (s *Store) ListAPIKeys(ctx context.Context) ([]APIKeyInfo, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,role,created_at,COALESCE(revoked_at,'') FROM api_keys ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []APIKeyInfo
+	for rows.Next() {
+		var x APIKeyInfo
+		if err := rows.Scan(&x.ID, &x.Name, &x.Role, &x.CreatedAt, &x.RevokedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) LoadThreatCache(ctx context.Context, ip string, now time.Time) (ThreatCacheRecord, bool, error) {

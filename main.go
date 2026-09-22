@@ -86,6 +86,12 @@ func main() {
 	case "apikey":
 		if len(os.Args) > 2 && os.Args[2] == "create" {
 			apiKeyCreate(os.Args[3:])
+		} else if len(os.Args) > 2 && os.Args[2] == "list" {
+			apiKeyList(os.Args[3:])
+		} else if len(os.Args) > 2 && os.Args[2] == "revoke" {
+			apiKeyRevoke(os.Args[3:])
+		} else if len(os.Args) > 2 && os.Args[2] == "rotate" {
+			apiKeyRotate(os.Args[3:])
 		} else {
 			usage()
 		}
@@ -698,7 +704,7 @@ func webhookHandler(db *store.Store, channel string) http.Handler {
 	})
 }
 func usage() {
-	fmt.Println("triage run --file alerts.ndjson [--out report.json]\ntriage rules test --file alerts.ndjson --config config.yaml\ntriage feedback export --db data/triage.db --out feedback.jsonl\ntriage eval --dataset feedback.jsonl\ntriage apikey create --db data/triage.db --name soc-bot --role analyst\ntriage demo [--listen :8080 --db data/triage.db]\ntriage serve [--listen :8080]\ntriage report --db data/triage.db --period 7d --out weekly.md\ntriage version")
+	fmt.Println("triage run --file alerts.ndjson [--out report.json]\ntriage rules test --file alerts.ndjson --config config.yaml\ntriage feedback export --db data/triage.db --out feedback.jsonl\ntriage eval --dataset feedback.jsonl\ntriage apikey create|list|revoke|rotate --db data/triage.db\ntriage demo [--listen :8080 --db data/triage.db]\ntriage serve [--listen :8080]\ntriage report --db data/triage.db --period 7d --out weekly.md\ntriage version")
 }
 
 func apiKeyCreate(args []string) {
@@ -724,6 +730,74 @@ func apiKeyCreate(args []string) {
 		panic(err)
 	}
 	defer db.Close()
+	x, err := db.CreateAPIKey(context.Background(), *name, *role, raw)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("name=%s role=%s key=%s\n", x.Name, x.Role, raw)
+}
+
+func apiKeyList(args []string) {
+	fs := flag.NewFlagSet("apikey list", flag.ExitOnError)
+	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
+	fs.Parse(args)
+	db, err := store.Open(*dbPath)
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	rows, err := db.ListAPIKeys(context.Background())
+	if err != nil {
+		panic(err)
+	}
+	b, _ := json.MarshalIndent(rows, "", "  ")
+	fmt.Println(string(b))
+}
+
+func apiKeyRevoke(args []string) {
+	fs := flag.NewFlagSet("apikey revoke", flag.ExitOnError)
+	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
+	id := fs.Int64("id", 0, "key id")
+	fs.Parse(args)
+	if *id <= 0 {
+		fmt.Fprintln(os.Stderr, "--id is required")
+		os.Exit(2)
+	}
+	db, err := store.Open(*dbPath)
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	if err = db.RevokeAPIKey(context.Background(), *id); err != nil {
+		panic(err)
+	}
+	fmt.Println("revoked", *id)
+}
+
+func apiKeyRotate(args []string) {
+	fs := flag.NewFlagSet("apikey rotate", flag.ExitOnError)
+	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
+	id := fs.Int64("id", 0, "old key id")
+	name := fs.String("name", "", "new key name")
+	role := fs.String("role", "viewer", "viewer, analyst or admin")
+	fs.Parse(args)
+	if *id <= 0 || *name == "" || (*role != "viewer" && *role != "analyst" && *role != "admin") {
+		fmt.Fprintln(os.Stderr, "--id, --name and valid --role are required")
+		os.Exit(2)
+	}
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	raw := base64.RawURLEncoding.EncodeToString(b)
+	db, err := store.Open(*dbPath)
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	if err = db.RevokeAPIKey(context.Background(), *id); err != nil {
+		panic(err)
+	}
 	x, err := db.CreateAPIKey(context.Background(), *name, *role, raw)
 	if err != nil {
 		panic(err)
