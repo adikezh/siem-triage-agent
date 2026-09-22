@@ -82,20 +82,23 @@ func Open(path string) (*Store, error) {
 }
 
 func (s *Store) migrate() error {
-	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS alerts (id TEXT PRIMARY KEY, source TEXT NOT NULL, timestamp TEXT NOT NULL, payload BLOB NOT NULL);
+	exec := func(query string) error { _, err := s.db.Exec(query); return err }
+	if err := exec(`CREATE TABLE IF NOT EXISTS alerts (id TEXT PRIMARY KEY, source TEXT NOT NULL, timestamp TEXT NOT NULL, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS incidents (id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL, alert_count INTEGER NOT NULL, score INTEGER NOT NULL, severity TEXT NOT NULL, payload BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS feedback (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id TEXT NOT NULL REFERENCES incidents(id), verdict TEXT NOT NULL CHECK(verdict IN ('tp','fp','ack')), comment TEXT NOT NULL DEFAULT '', actor TEXT NOT NULL, created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS suppressions (id INTEGER PRIMARY KEY AUTOINCREMENT, fingerprint TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('drop','downgrade','tag')), reason TEXT NOT NULL, expires_at TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL);`)
-	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, event TEXT NOT NULL, actor TEXT NOT NULL, payload TEXT NOT NULL, prev_hash TEXT NOT NULL, hash TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL)`)
-	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS llm_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, prompt_hash TEXT NOT NULL, latency_ms INTEGER NOT NULL, used INTEGER NOT NULL, error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`)
-	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS source_cursors (source TEXT PRIMARY KEY, timestamp TEXT NOT NULL, sort_json BLOB NOT NULL, updated_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id TEXT NOT NULL, channel TEXT NOT NULL, payload BLOB NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT NOT NULL, last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, UNIQUE(incident_id,channel));`)
-	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS threat_cache (ip TEXT PRIMARY KEY, source TEXT NOT NULL, details TEXT NOT NULL, malicious INTEGER NOT NULL, expires_at TEXT NOT NULL, updated_at TEXT NOT NULL)`)
-	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, role TEXT NOT NULL CHECK(role IN ('viewer','analyst','admin')), key_hash TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, revoked_at TEXT)`)
-	if err != nil {
+CREATE TABLE IF NOT EXISTS suppressions (id INTEGER PRIMARY KEY AUTOINCREMENT, fingerprint TEXT NOT NULL, action TEXT NOT NULL CHECK(action IN ('drop','downgrade','tag')), reason TEXT NOT NULL, expires_at TEXT, created_by TEXT NOT NULL, created_at TEXT NOT NULL);`); err != nil {
 		return fmt.Errorf("migrate sqlite: %w", err)
 	}
-	return nil
+	for _, query := range []string{`CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, event TEXT NOT NULL, actor TEXT NOT NULL, payload TEXT NOT NULL, prev_hash TEXT NOT NULL, hash TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL)`, `CREATE TABLE IF NOT EXISTS llm_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, prompt_hash TEXT NOT NULL, latency_ms INTEGER NOT NULL, used INTEGER NOT NULL, error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`, `CREATE TABLE IF NOT EXISTS source_cursors (source TEXT PRIMARY KEY, timestamp TEXT NOT NULL, sort_json BLOB NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id TEXT NOT NULL, channel TEXT NOT NULL, payload BLOB NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT NOT NULL, last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, UNIQUE(incident_id,channel));`} {
+		if err := exec(query); err != nil {
+			return fmt.Errorf("migrate sqlite: %w", err)
+		}
+	}
+	if err := exec(`CREATE TABLE IF NOT EXISTS threat_cache (ip TEXT PRIMARY KEY, source TEXT NOT NULL, details TEXT NOT NULL, malicious INTEGER NOT NULL, expires_at TEXT NOT NULL, updated_at TEXT NOT NULL)`); err != nil {
+		return fmt.Errorf("migrate sqlite: %w", err)
+	}
+	return exec(`CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, role TEXT NOT NULL CHECK(role IN ('viewer','analyst','admin')), key_hash TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, revoked_at TEXT)`)
 }
 
 func HashAPIKey(raw string) string {

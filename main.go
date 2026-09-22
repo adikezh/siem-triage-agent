@@ -138,7 +138,7 @@ func rulesTest(args []string) {
 	fs := flag.NewFlagSet("rules test", flag.ExitOnError)
 	file := fs.String("file", "", "NDJSON input")
 	configPath := fs.String("config", "", "YAML configuration path")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 	if *file == "" {
 		fmt.Fprintln(os.Stderr, "--file is required")
 		os.Exit(2)
@@ -185,7 +185,7 @@ func assetsImport(args []string) {
 	fs := flag.NewFlagSet("assets import", flag.ExitOnError)
 	file := fs.String("file", "", "CSV or YAML asset inventory")
 	out := fs.String("out", "", "output YAML path (optional)")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 	if *file == "" {
 		fmt.Fprintln(os.Stderr, "--file is required")
 		os.Exit(2)
@@ -222,7 +222,7 @@ func assetsImport(args []string) {
 func migrateUp(args []string) {
 	fs := flag.NewFlagSet("migrate up", flag.ExitOnError)
 	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 	if err := os.MkdirAll(filepath.Dir(*dbPath), 0700); err != nil {
 		panic(err)
 	}
@@ -244,7 +244,7 @@ func run(args []string) {
 	llmURL := fs.String("llm-url", "", "optional OpenAI-compatible base URL")
 	llmModel := fs.String("llm-model", "", "optional LLM model")
 	llmKeyEnv := fs.String("llm-api-key-env", "", "environment variable containing LLM API key")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		panic(err)
@@ -559,12 +559,6 @@ func groupWithWindowConfig(as []Alert, window, maxAge time.Duration, grouping co
 	}
 	return out
 }
-func score(level int) int {
-	return scoring.Score(scoring.Input{RuleLevel: level})
-}
-func severity(s int) string {
-	return scoring.Severity(s)
-}
 func serve(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	addr := fs.String("listen", ":8080", "address")
@@ -582,7 +576,7 @@ func serve(args []string) {
 	webhookURL := fs.String("webhook-url", "", "optional notification webhook URL")
 	tlsCert := fs.String("tls-cert", "", "TLS certificate path")
 	tlsKey := fs.String("tls-key", "", "TLS private key path")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		panic(err)
@@ -1218,7 +1212,7 @@ func apiKeyCreate(args []string) {
 	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
 	name := fs.String("name", "", "key name")
 	role := fs.String("role", "viewer", "viewer, analyst or admin")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 	if *name == "" || (*role != "viewer" && *role != "analyst" && *role != "admin") {
 		fmt.Fprintln(os.Stderr, "--name and valid --role are required")
 		os.Exit(2)
@@ -1246,7 +1240,7 @@ func apiKeyCreate(args []string) {
 func apiKeyList(args []string) {
 	fs := flag.NewFlagSet("apikey list", flag.ExitOnError)
 	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 	db, err := store.Open(*dbPath)
 	if err != nil {
 		panic(err)
@@ -1264,7 +1258,7 @@ func apiKeyRevoke(args []string) {
 	fs := flag.NewFlagSet("apikey revoke", flag.ExitOnError)
 	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
 	id := fs.Int64("id", 0, "key id")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 	if *id <= 0 {
 		fmt.Fprintln(os.Stderr, "--id is required")
 		os.Exit(2)
@@ -1286,7 +1280,7 @@ func apiKeyRotate(args []string) {
 	id := fs.Int64("id", 0, "old key id")
 	name := fs.String("name", "", "new key name")
 	role := fs.String("role", "viewer", "viewer, analyst or admin")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 	if *id <= 0 || *name == "" || (*role != "viewer" && *role != "analyst" && *role != "admin") {
 		fmt.Fprintln(os.Stderr, "--id, --name and valid --role are required")
 		os.Exit(2)
@@ -1315,7 +1309,7 @@ func demoCommand(args []string) {
 	fs := flag.NewFlagSet("demo", flag.ExitOnError)
 	addr := fs.String("listen", ":8080", "address")
 	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 	run([]string{"--file", "testdata/example.ndjson", "--db", *dbPath})
 	serve([]string{"--listen", *addr, "--db", *dbPath})
 }
@@ -1323,7 +1317,7 @@ func demoCommand(args []string) {
 func evalCommand(args []string) {
 	fs := flag.NewFlagSet("eval", flag.ExitOnError)
 	dataset := fs.String("dataset", "", "feedback JSONL dataset")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 	if *dataset == "" {
 		fmt.Fprintln(os.Stderr, "--dataset is required")
 		os.Exit(2)
@@ -1348,7 +1342,7 @@ func feedbackExport(args []string) {
 	fs := flag.NewFlagSet("feedback export", flag.ExitOnError)
 	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
 	out := fs.String("out", "", "JSONL output path")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 	db, e := store.Open(*dbPath)
 	if e != nil {
 		panic(e)
@@ -1382,7 +1376,7 @@ func reportCommand(args []string) {
 	period := fs.String("period", "7d", "period: day, week, month, 24h, 7d or 30d")
 	out := fs.String("out", "", "output markdown path")
 	format := fs.String("format", "md", "format: md, pdf or docx")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 	if *format != "md" && *format != "pdf" && *format != "docx" {
 		fmt.Fprintln(os.Stderr, "format must be md, pdf or docx")
 		os.Exit(2)
