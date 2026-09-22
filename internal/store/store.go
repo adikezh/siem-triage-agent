@@ -28,6 +28,11 @@ type SuppressionRecord struct {
 	CreatedAt   string `json:"created_at"`
 }
 
+type ThreatCacheRecord struct {
+	IP, Source, Details, ExpiresAt string
+	Malicious                      bool
+}
+
 func (s *Store) SaveAlert(ctx context.Context, id, source string, timestamp time.Time, payload any) error {
 	b, e := json.Marshal(payload)
 	if e != nil {
@@ -59,10 +64,32 @@ CREATE TABLE IF NOT EXISTS feedback (id INTEGER PRIMARY KEY AUTOINCREMENT, incid
 	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS llm_calls (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, prompt_hash TEXT NOT NULL, latency_ms INTEGER NOT NULL, used INTEGER NOT NULL, error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL)`)
 	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS source_cursors (source TEXT PRIMARY KEY, timestamp TEXT NOT NULL, sort_json BLOB NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id TEXT NOT NULL, channel TEXT NOT NULL, payload BLOB NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT NOT NULL, last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, UNIQUE(incident_id,channel));`)
+	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS threat_cache (ip TEXT PRIMARY KEY, source TEXT NOT NULL, details TEXT NOT NULL, malicious INTEGER NOT NULL, expires_at TEXT NOT NULL, updated_at TEXT NOT NULL)`)
 	if err != nil {
 		return fmt.Errorf("migrate sqlite: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) LoadThreatCache(ctx context.Context, ip string, now time.Time) (ThreatCacheRecord, bool, error) {
+	var x ThreatCacheRecord
+	var malicious int
+	err := s.db.QueryRowContext(ctx, `SELECT ip,source,details,malicious,expires_at FROM threat_cache WHERE ip=? AND expires_at>?`, ip, now.UTC().Format(time.RFC3339Nano)).Scan(&x.IP, &x.Source, &x.Details, &malicious, &x.ExpiresAt)
+	if err == sql.ErrNoRows {
+		return ThreatCacheRecord{}, false, nil
+	}
+	if err != nil {
+		return ThreatCacheRecord{}, false, err
+	}
+	x.Malicious = malicious != 0
+	return x, true, nil
+}
+
+func (s *Store) SaveThreatCache(ctx context.Context, x ThreatCacheRecord, ttl time.Duration) error {
+	now := time.Now().UTC()
+	expires := now.Add(ttl).Format(time.RFC3339Nano)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO threat_cache(ip,source,details,malicious,expires_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(ip) DO UPDATE SET source=excluded.source,details=excluded.details,malicious=excluded.malicious,expires_at=excluded.expires_at,updated_at=excluded.updated_at`, x.IP, x.Source, x.Details, x.Malicious, expires, now.Format(time.RFC3339Nano))
+	return err
 }
 
 type LLMTrace struct {

@@ -76,3 +76,18 @@ func TestSuppressionCRUD(t *testing.T) {
 		t.Fatalf("rows after delete=%#v err=%v", rows, err)
 	}
 }
+
+func TestThreatCachePersistence(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "triage.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err = s.SaveThreatCache(context.Background(), ThreatCacheRecord{IP: "1.2.3.4", Source: "test", Details: "score=90", Malicious: true}, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	x, ok, err := s.LoadThreatCache(context.Background(), "1.2.3.4", time.Now())
+	if err != nil || !ok || !x.Malicious || x.Source != "test" {
+		t.Fatalf("cache=%#v ok=%v err=%v", x, ok, err)
+	}
+}

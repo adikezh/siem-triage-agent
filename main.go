@@ -251,11 +251,21 @@ func run(args []string) {
 			a.Malicious = true
 		}
 		if len(threat) > 0 && a.SrcIP != "" {
-			lookupCtx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-			result, lookupErr := threatCache.Lookup(lookupCtx, a.SrcIP, threat)
-			cancel()
-			if lookupErr == nil && result.Malicious {
-				a.Malicious = true
+			cached, found, cacheErr := db.LoadThreatCache(context.Background(), a.SrcIP, time.Now().UTC())
+			if cacheErr == nil && found {
+				if cached.Malicious {
+					a.Malicious = true
+				}
+			} else {
+				lookupCtx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+				result, lookupErr := threatCache.Lookup(lookupCtx, a.SrcIP, threat)
+				cancel()
+				if lookupErr == nil {
+					if result.Malicious {
+						a.Malicious = true
+					}
+					_ = db.SaveThreatCache(context.Background(), store.ThreatCacheRecord{IP: a.SrcIP, Source: result.Source, Details: result.Details, Malicious: result.Malicious}, 24*time.Hour)
+				}
 			}
 		}
 		alerts = append(alerts, a)
