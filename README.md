@@ -1,5 +1,7 @@
 # SIEM Triage Agent
 
+Core is licensed under Apache-2.0. See [LICENSE](LICENSE).
+
 Community core: NDJSON ingest, deduplication, 15-minute correlation, deterministic scoring, CLI, health API and a non-root container.
 
 Quick start:
