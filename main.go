@@ -286,7 +286,7 @@ func serve(args []string) {
 		w.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(w).Encode(records)
 	})
-	http.Handle("/api/incidents", auth.Middleware(incidentsHandler, apiKey))
+	http.Handle("/api/incidents", auth.MiddlewareHash(incidentsHandler, auth.HashKey(apiKey)))
 	feedbackHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -313,7 +313,7 @@ func serve(args []string) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"status":"saved"}`))
 	})
-	http.Handle("/api/incidents/feedback", auth.Middleware(feedbackHandler, apiKey))
+	http.Handle("/api/incidents/feedback", auth.MiddlewareHash(feedbackHandler, auth.HashKey(apiKey)))
 	fmt.Println("listening on", *addr)
 	if e := http.ListenAndServe(*addr, nil); e != nil {
 		panic(e)

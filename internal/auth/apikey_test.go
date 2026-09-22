@@ -21,3 +21,14 @@ func TestMiddleware(t *testing.T) {
 		}
 	}
 }
+
+func TestHashMiddleware(t *testing.T) {
+	h := MiddlewareHash(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }), HashKey("secret"))
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("authorization", "Bearer secret")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 204 {
+		t.Fatalf("got %d", w.Code)
+	}
+}
