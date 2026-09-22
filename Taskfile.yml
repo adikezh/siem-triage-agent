@@ -12,3 +12,6 @@ tasks:
     cmds: [helm lint deploy/helm/siem-triage-agent]
   report:
     cmds: [go run . report --db data/triage.db --period 7d --format md --out weekly.md]
+  benchmark:
+    desc: Run the 100k-alert correlation benchmark once
+    cmds: [go test -run '^$' -bench '^BenchmarkGroup100k$' -benchtime=1x -count=1]
