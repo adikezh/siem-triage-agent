@@ -153,7 +153,14 @@ func run(args []string) {
 	defer f.Close()
 	var alerts []Alert
 	seen := map[string]bool{}
-	assets, e := enrich.Load(cfg.Enrichment.AssetsFile)
+	var assets map[string]enrich.Asset
+	var assetErr error
+	if strings.HasSuffix(strings.ToLower(cfg.Enrichment.AssetsFile), ".csv") {
+		assets, assetErr = enrich.LoadCSV(cfg.Enrichment.AssetsFile)
+	} else {
+		assets, assetErr = enrich.Load(cfg.Enrichment.AssetsFile)
+	}
+	e = assetErr
 	if e != nil {
 		panic(e)
 	}

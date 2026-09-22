@@ -20,3 +20,14 @@ func TestLoadAndApply(t *testing.T) {
 		t.Fatalf("%#v %v", a, ok)
 	}
 }
+
+func TestLoadCSV(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "assets.csv")
+	if e := os.WriteFile(p, []byte("ip,hostname,owner,environment,criticality\n10.1.2.4,web,soc,prod,4\n"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	m, e := LoadCSV(p)
+	if e != nil || m["10.1.2.4"].Criticality != 4 {
+		t.Fatalf("%#v %v", m, e)
+	}
+}
