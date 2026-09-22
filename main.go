@@ -678,7 +678,7 @@ func serve(args []string) {
 	http.Handle("/", web.HandlerWithAssets(db, assets))
 	incidentsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", 405)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		q := r.URL.Query()
