@@ -146,6 +146,25 @@ func TestFingerprintStats(t *testing.T) {
 	}
 }
 
+func TestIncidentHistoryByContext(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "context.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	n := time.Now().UTC()
+	if err = s.SaveIncident(context.Background(), map[string]string{"agent_id": "a1", "src_ip": "203.0.113.5"}, "ctx-1", "rule-a", "high", 80, 1, n, n); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SaveIncident(context.Background(), map[string]string{"agent_id": "a2", "src_ip": "203.0.113.5"}, "ctx-2", "rule-b", "medium", 50, 1, n, n); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.IncidentHistoryByContext(context.Background(), "a1", "203.0.113.5", 5)
+	if err != nil || len(rows) != 1 || rows[0].IncidentID != "ctx-1" {
+		t.Fatalf("rows=%#v err=%v", rows, err)
+	}
+}
+
 func TestAPIKeyHashAndVerify(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "triage.db"))
 	if err != nil {

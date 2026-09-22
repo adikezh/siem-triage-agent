@@ -73,6 +73,7 @@ type Incident struct {
 	Criticality      int       `json:"criticality,omitempty"`
 	HighImpactTactic bool      `json:"high_impact_tactic,omitempty"`
 	SrcIP            string    `json:"src_ip,omitempty"`
+	AgentID          string    `json:"agent_id,omitempty"`
 	MITRETactics     []string  `json:"mitre_tactics,omitempty"`
 	Summary          string    `json:"summary,omitempty"`
 	Actions          []string  `json:"actions,omitempty"`
@@ -426,7 +427,10 @@ func run(args []string) {
 			i.Severity = scoring.Severity(s)
 		}
 		if engine != nil {
-			historyRows, historyErr := db.IncidentHistory(context.Background(), i.Fingerprint, 5)
+			historyRows, historyErr := db.IncidentHistoryByContext(context.Background(), i.AgentID, i.SrcIP, 5)
+			if historyErr == nil && len(historyRows) == 0 {
+				historyRows, historyErr = db.IncidentHistory(context.Background(), i.Fingerprint, 5)
+			}
 			if historyErr != nil {
 				panic(historyErr)
 			}
@@ -525,7 +529,8 @@ func groupWithWindowConfig(as []Alert, window, maxAge time.Duration, grouping co
 		i, ok := m[fp]
 		if !ok || a.Timestamp.Sub(out[i].LastSeen) > window || a.Timestamp.Sub(out[i].FirstSeen) > maxAge {
 			s := scoring.Score(scoring.Input{RuleLevel: a.RuleLevel, Malicious: a.Malicious, Criticality: a.Criticality, HighImpactTactic: a.HighImpactTactic, InternalWhitelist: a.Internal})
-			inc := Incident{Fingerprint: fp, FirstSeen: a.Timestamp, LastSeen: a.Timestamp, AlertCount: 1, RuleLevel: a.RuleLevel, Malicious: a.Malicious, Internal: a.Internal, Criticality: a.Criticality, HighImpactTactic: a.HighImpactTactic, SrcIP: a.SrcIP, MITRETactics: append([]string(nil), a.MITRETactics...), Score: s, Severity: scoring.Severity(s)}
+			agentID, _ := a.Agent["id"].(string)
+			inc := Incident{Fingerprint: fp, FirstSeen: a.Timestamp, LastSeen: a.Timestamp, AlertCount: 1, RuleLevel: a.RuleLevel, Malicious: a.Malicious, Internal: a.Internal, Criticality: a.Criticality, HighImpactTactic: a.HighImpactTactic, SrcIP: a.SrcIP, AgentID: agentID, MITRETactics: append([]string(nil), a.MITRETactics...), Score: s, Severity: scoring.Severity(s)}
 			if a.Tag != "" {
 				inc.Tags = []string{a.Tag}
 			}
@@ -551,6 +556,10 @@ func groupWithWindowConfig(as []Alert, window, maxAge time.Duration, grouping co
 			}
 			if out[i].SrcIP == "" {
 				out[i].SrcIP = a.SrcIP
+			}
+			if out[i].AgentID == "" {
+				agentID, _ := a.Agent["id"].(string)
+				out[i].AgentID = agentID
 			}
 			for _, tactic := range a.MITRETactics {
 				found := false
@@ -1106,7 +1115,10 @@ func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, 
 				}
 			}
 			if engine != nil {
-				historyRows, historyErr := db.IncidentHistory(ctx, incident.Fingerprint, 5)
+				historyRows, historyErr := db.IncidentHistoryByContext(ctx, incident.AgentID, incident.SrcIP, 5)
+				if historyErr == nil && len(historyRows) == 0 {
+					historyRows, historyErr = db.IncidentHistory(ctx, incident.Fingerprint, 5)
+				}
 				if historyErr != nil {
 					fmt.Fprintln(os.Stderr, "incident history:", historyErr)
 					return

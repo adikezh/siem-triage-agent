@@ -550,6 +550,48 @@ func (s *Store) IncidentHistory(ctx context.Context, fingerprint string, limit i
 	return out, rows.Err()
 }
 
+// IncidentHistoryByContext returns recent incidents involving the same agent
+// and source IP, even when their grouping fingerprints differ.
+func (s *Store) IncidentHistoryByContext(ctx context.Context, agentID, srcIP string, limit int) ([]HistoryRecord, error) {
+	if agentID == "" && srcIP == "" {
+		return nil, nil
+	}
+	rows, err := s.ListIncidents(ctx)
+	if err != nil {
+		return nil, err
+	}
+	feedback, feedbackErr := s.ListFeedback(ctx)
+	if feedbackErr != nil {
+		return nil, feedbackErr
+	}
+	type contextFields struct {
+		AgentID string `json:"agent_id"`
+		SrcIP   string `json:"src_ip"`
+	}
+	out := make([]HistoryRecord, 0, limit)
+	for _, row := range rows {
+		var fields contextFields
+		if json.Unmarshal(row.Payload, &fields) != nil {
+			continue
+		}
+		if (agentID != "" && fields.AgentID != agentID) || (srcIP != "" && fields.SrcIP != srcIP) {
+			continue
+		}
+		verdict := ""
+		for i := len(feedback) - 1; i >= 0; i-- {
+			if feedback[i].IncidentID == row.ID {
+				verdict = feedback[i].Verdict
+				break
+			}
+		}
+		out = append(out, HistoryRecord{IncidentID: row.ID, Severity: row.Severity, Verdict: verdict, LastSeen: row.LastSeen})
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
 type FeedbackRecord struct {
 	IncidentID, Verdict, Comment, Actor, CreatedAt string
 	Payload                                        json.RawMessage
