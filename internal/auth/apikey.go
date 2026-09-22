@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -58,6 +59,27 @@ func MiddlewareVerify(next http.Handler, verify func(string) bool) http.Handler 
 		next.ServeHTTP(w, r)
 	})
 }
+
+func MiddlewareVerifyRole(next http.Handler, verify func(string) (string, bool)) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		v := r.Header.Get("authorization")
+		if !strings.HasPrefix(v, "Bearer ") {
+			http.Error(w, "missing bearer token", http.StatusUnauthorized)
+			return
+		}
+		role, ok := verify(strings.TrimSpace(strings.TrimPrefix(v, "Bearer ")))
+		if !ok {
+			http.Error(w, "invalid API key", http.StatusUnauthorized)
+			return
+		}
+		ctx := context.WithValue(r.Context(), roleKey{}, role)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+type roleKey struct{}
+
+func Role(r *http.Request) string { v, _ := r.Context().Value(roleKey{}).(string); return v }
 func RequireKey(raw string) (string, error) {
 	if strings.TrimSpace(raw) == "" {
 		return "", fmt.Errorf("API key must not be empty")

@@ -32,3 +32,19 @@ func TestHashMiddleware(t *testing.T) {
 		t.Fatalf("got %d", w.Code)
 	}
 }
+
+func TestRoleMiddleware(t *testing.T) {
+	h := MiddlewareVerifyRole(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if Role(r) != "analyst" {
+			t.Errorf("role=%q", Role(r))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}), func(raw string) (string, bool) { return raw, raw == "analyst" })
+	r := httptest.NewRequest(http.MethodPost, "/", nil)
+	r.Header.Set("authorization", "Bearer analyst")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("got %d", w.Code)
+	}
+}

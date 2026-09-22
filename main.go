@@ -455,7 +455,7 @@ func serve(args []string) {
 	if apiKey != "" {
 		authHash = auth.HashKey(apiKey)
 	}
-	protect := func(next http.Handler) http.Handler {
+	protectRoles := func(next http.Handler, allowed ...string) http.Handler {
 		if authHash != "" {
 			return auth.MiddlewareHash(next, authHash)
 		}
@@ -466,11 +466,20 @@ func serve(args []string) {
 		if !hasKeys {
 			return next
 		}
-		return auth.MiddlewareVerify(next, func(raw string) bool {
-			_, ok, verifyErr := db.VerifyAPIKey(context.Background(), raw)
-			return verifyErr == nil && ok
+		return auth.MiddlewareVerifyRole(next, func(raw string) (string, bool) {
+			role, ok, verifyErr := db.VerifyAPIKey(context.Background(), raw)
+			if verifyErr != nil || !ok {
+				return "", false
+			}
+			for _, candidate := range allowed {
+				if role == candidate || role == "admin" {
+					return role, true
+				}
+			}
+			return role, false
 		})
 	}
+	protect := func(next http.Handler) http.Handler { return protectRoles(next, "viewer", "analyst", "admin") }
 	webhookSecret := ""
 	if *webhookSecretEnv != "" {
 		webhookSecret = strings.TrimSpace(os.Getenv(*webhookSecretEnv))
@@ -522,7 +531,7 @@ func serve(args []string) {
 		w.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"total": len(rows), "by_severity": counts})
 	})))
-	http.Handle("/api/suppressions", protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	http.Handle("/api/suppressions", protectRoles(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			rows, e := db.ListSuppressions(r.Context())
@@ -559,8 +568,8 @@ func serve(args []string) {
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
-	})))
-	http.Handle("/api/suppressions/", protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	}), "analyst", "admin"))
+	http.Handle("/api/suppressions/", protectRoles(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -575,7 +584,7 @@ func serve(args []string) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
-	})))
+	}), "admin"))
 	feedbackHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -602,7 +611,7 @@ func serve(args []string) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"status":"saved"}`))
 	})
-	http.Handle("/api/incidents/feedback", protect(feedbackHandler))
+	http.Handle("/api/incidents/feedback", protectRoles(feedbackHandler, "analyst", "admin"))
 	http.Handle("/api/integrations/telegram/callback", callbackAuth(webhookHandler(db, "telegram"), webhookSecret))
 	http.Handle("/api/integrations/slack/callback", callbackAuth(webhookHandler(db, "slack"), webhookSecret))
 	fmt.Println("listening on", *addr)
