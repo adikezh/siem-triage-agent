@@ -15,6 +15,8 @@ import (
 	"github.com/adikezh/siem-triage-agent/internal/config"
 	"github.com/adikezh/siem-triage-agent/internal/rules"
 	"github.com/adikezh/siem-triage-agent/internal/store"
+	triageengine "github.com/adikezh/siem-triage-agent/internal/triage"
+	"github.com/adikezh/siem-triage-agent/internal/triage/llm"
 	"github.com/adikezh/siem-triage-agent/internal/triage/scoring"
 )
 
@@ -70,6 +72,9 @@ func run(args []string) {
 	out := fs.String("out", "", "JSON output")
 	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
 	configPath := fs.String("config", "", "YAML configuration path")
+	llmURL := fs.String("llm-url", "", "optional OpenAI-compatible base URL")
+	llmModel := fs.String("llm-model", "", "optional LLM model")
+	llmKeyEnv := fs.String("llm-api-key-env", "", "environment variable containing LLM API key")
 	fs.Parse(args)
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -132,7 +137,22 @@ func run(args []string) {
 		panic(err)
 	}
 	defer db.Close()
+	var engine *triageengine.Engine
+	if *llmURL != "" {
+		key := ""
+		if *llmKeyEnv != "" {
+			key = os.Getenv(*llmKeyEnv)
+		}
+		p := llm.OpenAICompatible{BaseURL: *llmURL, APIKey: key}
+		engine = &triageengine.Engine{Threshold: cfg.Triage.LLMThreshold, Provider: p, Model: *llmModel, InternalCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"}}
+	}
 	for _, i := range inc {
+		if engine != nil {
+			tr := engine.Analyze(context.Background(), triageengine.Case{Rule: scoring.Input{RuleLevel: i.RuleLevel, Malicious: i.Malicious, Criticality: i.Criticality, HighImpactTactic: i.HighImpactTactic, InternalWhitelist: i.Internal}, RuleSeverity: i.Severity, Prompt: llm.PromptInput{Rule: i.Fingerprint, Description: "correlated SIEM incident", SourceIP: strings.Split(i.Fingerprint, "|")[2]}})
+			i.Score = tr.Score
+			i.Severity = tr.Severity
+			_ = db.SaveLLMTrace(context.Background(), store.LLMTrace{IncidentID: i.Fingerprint, Provider: tr.Trace.Provider, Model: tr.Trace.Model, PromptHash: tr.Trace.PromptHash, LatencyMS: tr.Trace.LatencyMS, Used: tr.Trace.Used, Error: tr.Trace.Error})
+		}
 		if err := db.SaveIncident(context.Background(), i, i.Fingerprint+"/"+i.FirstSeen.Format(time.RFC3339Nano), i.Fingerprint, i.Severity, i.Score, i.AlertCount, i.FirstSeen, i.LastSeen); err != nil {
 			panic(err)
 		}
