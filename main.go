@@ -15,6 +15,7 @@ import (
 	"github.com/adikezh/siem-triage-agent/internal/auth"
 	"github.com/adikezh/siem-triage-agent/internal/config"
 	"github.com/adikezh/siem-triage-agent/internal/enrich"
+	"github.com/adikezh/siem-triage-agent/internal/eval"
 	"github.com/adikezh/siem-triage-agent/internal/httpapi"
 	"github.com/adikezh/siem-triage-agent/internal/metrics"
 	"github.com/adikezh/siem-triage-agent/internal/report"
@@ -82,6 +83,8 @@ func main() {
 		} else {
 			usage()
 		}
+	case "eval":
+		evalCommand(os.Args[2:])
 	default:
 		usage()
 	}
@@ -450,7 +453,31 @@ func serve(args []string) {
 	}
 }
 func usage() {
-	fmt.Println("triage run --file alerts.ndjson [--out report.json]\ntriage rules test --file alerts.ndjson --config config.yaml\ntriage feedback export --db data/triage.db --out feedback.jsonl\ntriage serve [--listen :8080]\ntriage report --db data/triage.db --period 7d --out weekly.md\ntriage version")
+	fmt.Println("triage run --file alerts.ndjson [--out report.json]\ntriage rules test --file alerts.ndjson --config config.yaml\ntriage feedback export --db data/triage.db --out feedback.jsonl\ntriage eval --dataset feedback.jsonl\ntriage serve [--listen :8080]\ntriage report --db data/triage.db --period 7d --out weekly.md\ntriage version")
+}
+
+func evalCommand(args []string) {
+	fs := flag.NewFlagSet("eval", flag.ExitOnError)
+	dataset := fs.String("dataset", "", "feedback JSONL dataset")
+	fs.Parse(args)
+	if *dataset == "" {
+		fmt.Fprintln(os.Stderr, "--dataset is required")
+		os.Exit(2)
+	}
+	f, e := os.Open(*dataset)
+	if e != nil {
+		panic(e)
+	}
+	defer f.Close()
+	r, e := eval.Run(f)
+	if e != nil {
+		panic(e)
+	}
+	b, e := json.MarshalIndent(r, "", "  ")
+	if e != nil {
+		panic(e)
+	}
+	fmt.Println(string(b))
 }
 
 func feedbackExport(args []string) {
