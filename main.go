@@ -14,6 +14,7 @@ import (
 
 	"github.com/adikezh/siem-triage-agent/internal/auth"
 	"github.com/adikezh/siem-triage-agent/internal/config"
+	"github.com/adikezh/siem-triage-agent/internal/report"
 	"github.com/adikezh/siem-triage-agent/internal/rules"
 	"github.com/adikezh/siem-triage-agent/internal/store"
 	triageengine "github.com/adikezh/siem-triage-agent/internal/triage"
@@ -63,6 +64,8 @@ func main() {
 		run(os.Args[2:])
 	case "serve":
 		serve(os.Args[2:])
+	case "report":
+		reportCommand(os.Args[2:])
 	default:
 		usage()
 	}
@@ -313,5 +316,46 @@ func serve(args []string) {
 	}
 }
 func usage() {
-	fmt.Println("triage run --file alerts.ndjson [--out report.json]\ntriage serve [--listen :8080]\ntriage version")
+	fmt.Println("triage run --file alerts.ndjson [--out report.json]\ntriage serve [--listen :8080]\ntriage report --db data/triage.db --period 7d --out weekly.md\ntriage version")
+}
+
+func reportCommand(args []string) {
+	fs := flag.NewFlagSet("report", flag.ExitOnError)
+	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
+	period := fs.String("period", "7d", "period: 24h, 7d, 30d")
+	out := fs.String("out", "", "output markdown path")
+	format := fs.String("format", "md", "format (md only)")
+	fs.Parse(args)
+	if *format != "md" {
+		fmt.Fprintln(os.Stderr, "only --format md is currently supported")
+		os.Exit(2)
+	}
+	d, e := time.ParseDuration(*period)
+	if e != nil {
+		if strings.HasSuffix(*period, "d") {
+			d0, e0 := time.ParseDuration(strings.TrimSuffix(*period, "d") + "h")
+			if e0 != nil {
+				panic(e0)
+			}
+			d = d0 * 24
+		} else {
+			panic(e)
+		}
+	}
+	db, e := store.Open(*dbPath)
+	if e != nil {
+		panic(e)
+	}
+	defer db.Close()
+	text, e := report.Markdown(context.Background(), db, d)
+	if e != nil {
+		panic(e)
+	}
+	if *out != "" {
+		if e = os.WriteFile(*out, []byte(text), 0600); e != nil {
+			panic(e)
+		}
+	} else {
+		fmt.Print(text)
+	}
 }

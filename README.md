@@ -7,6 +7,7 @@ Quick start:
     go run . run --file testdata/example.ndjson --db data/triage.db
     go test ./...
     docker compose up --build
+    go run . report --db data/triage.db --period 7d --format md --out weekly.md
 
 LLM is opt-in. For an OpenAI-compatible endpoint set `--llm-url` and `--llm-model`; use `--llm-api-key-env` to name an environment variable for the key. Without `--llm-url`, the run is rule-only and makes no outbound request.
 
