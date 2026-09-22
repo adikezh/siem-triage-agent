@@ -49,6 +49,26 @@ func MiddlewareHash(next http.Handler, expectedHash string) http.Handler {
 	})
 }
 
+func MiddlewareHashRole(next http.Handler, expectedHash, role string) http.Handler {
+	if expectedHash == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		v := r.Header.Get("authorization")
+		if !strings.HasPrefix(v, "Bearer ") {
+			http.Error(w, "missing bearer token", http.StatusUnauthorized)
+			return
+		}
+		h := sha256.Sum256([]byte(strings.TrimSpace(strings.TrimPrefix(v, "Bearer "))))
+		if subtle.ConstantTimeCompare([]byte(hex.EncodeToString(h[:])), []byte(expectedHash)) != 1 {
+			http.Error(w, "invalid API key", http.StatusUnauthorized)
+			return
+		}
+		ctx := context.WithValue(r.Context(), roleKey{}, role)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 func MiddlewareVerify(next http.Handler, verify func(string) bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		v := r.Header.Get("authorization")

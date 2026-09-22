@@ -571,6 +571,7 @@ func serve(args []string) {
 	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
 	configPath := fs.String("config", "", "YAML configuration path")
 	apiKeyEnv := fs.String("api-key-env", "", "environment variable containing API key")
+	apiKeyRole := fs.String("api-key-role", "admin", "role assigned to the environment API key: viewer, analyst or admin")
 	webhookSecretEnv := fs.String("webhook-secret-env", "", "environment variable containing Telegram/Slack webhook secret")
 	slackSigningSecretEnv := fs.String("slack-signing-secret-env", "", "environment variable containing Slack signing secret")
 	sourceURL := fs.String("source-url", "", "optional Wazuh/OpenSearch URL for continuous polling")
@@ -618,12 +619,20 @@ func serve(args []string) {
 	}
 	authHash := ""
 	if apiKey != "" {
+		if *apiKeyRole != "viewer" && *apiKeyRole != "analyst" && *apiKeyRole != "admin" {
+			panic("api-key-role must be viewer, analyst or admin")
+		}
 		authHash = auth.HashKey(apiKey)
 	}
 	protectRoles := func(next http.Handler, allowed ...string) http.Handler {
 		next = httpapi.RateLimit(next, 120, time.Minute)
 		if authHash != "" {
-			return auth.MiddlewareHash(next, authHash)
+			for _, candidate := range allowed {
+				if candidate == *apiKeyRole || *apiKeyRole == "admin" {
+					return auth.MiddlewareHashRole(next, authHash, *apiKeyRole)
+				}
+			}
+			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "forbidden", http.StatusForbidden) })
 		}
 		hasKeys, hasKeysErr := db.HasAPIKeys(context.Background())
 		if hasKeysErr != nil {
