@@ -39,6 +39,36 @@ type Config struct {
 		Providers    []Provider `yaml:"providers"`
 		Budget       Budget     `yaml:"budget"`
 	} `yaml:"triage"`
+	Notify struct {
+		Telegram struct {
+			Enabled  bool   `yaml:"enabled"`
+			TokenEnv string `yaml:"token_env"`
+			ChatID   string `yaml:"chat_id"`
+			BaseURL  string `yaml:"base_url"`
+		} `yaml:"telegram"`
+		Slack struct {
+			Enabled bool   `yaml:"enabled"`
+			URL     string `yaml:"url"`
+		} `yaml:"slack"`
+		IRIS struct {
+			Enabled   bool   `yaml:"enabled"`
+			URL       string `yaml:"url"`
+			APIKeyEnv string `yaml:"api_key_env"`
+		} `yaml:"iris"`
+		TheHive struct {
+			Enabled   bool   `yaml:"enabled"`
+			URL       string `yaml:"url"`
+			APIKeyEnv string `yaml:"api_key_env"`
+		} `yaml:"thehive"`
+		Jira struct {
+			Enabled   bool   `yaml:"enabled"`
+			BaseURL   string `yaml:"base_url"`
+			Username  string `yaml:"username"`
+			TokenEnv  string `yaml:"token_env"`
+			Project   string `yaml:"project"`
+			IssueType string `yaml:"issue_type"`
+		} `yaml:"jira"`
+	} `yaml:"notify"`
 }
 
 type Grouping struct {

@@ -910,7 +910,13 @@ func serve(args []string) {
 		}
 		var sender pipeline.Sender
 		if *webhookURL != "" {
-			sender = notify.Webhook{URL: *webhookURL, Secret: webhookSecret}
+			senders := map[string]notify.Sender{"webhook": notify.Webhook{URL: *webhookURL, Secret: webhookSecret}}
+			for channel, configured := range configuredNotificationSenders(cfg) {
+				senders[channel] = configured
+			}
+			sender = notify.Multi{Senders: senders}
+		} else if senders := configuredNotificationSenders(cfg); len(senders) > 0 {
+			sender = notify.Multi{Senders: senders}
 		}
 		go pollWazuh(serveCtx, db, ingest.WazuhClient{BaseURL: *sourceURL, Index: *sourceIndex, Username: *sourceUser, Password: password}, *sourceInterval, cfg.Correlation.Window, cfg.Correlation.MaxIncidentAge, cfg.Correlation.Grouping, cfg.Enrichment.InternalCIDRs, assets, iocs, geoip, engine, sender, cfg.Correlation.SuppressionsFile)
 	}
@@ -958,6 +964,26 @@ func topCounts(values map[string]int, limit int) []countItem {
 	})
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
+	}
+	return out
+}
+
+func configuredNotificationSenders(cfg config.Config) map[string]notify.Sender {
+	out := map[string]notify.Sender{}
+	if cfg.Notify.Telegram.Enabled {
+		out["telegram"] = notify.Telegram{BaseURL: cfg.Notify.Telegram.BaseURL, Token: os.Getenv(cfg.Notify.Telegram.TokenEnv), ChatID: cfg.Notify.Telegram.ChatID}
+	}
+	if cfg.Notify.Slack.Enabled {
+		out["slack"] = notify.Slack{URL: cfg.Notify.Slack.URL}
+	}
+	if cfg.Notify.IRIS.Enabled {
+		out["iris"] = notify.IRIS{URL: cfg.Notify.IRIS.URL, APIKey: os.Getenv(cfg.Notify.IRIS.APIKeyEnv)}
+	}
+	if cfg.Notify.TheHive.Enabled {
+		out["thehive"] = notify.TheHive{URL: cfg.Notify.TheHive.URL, APIKey: os.Getenv(cfg.Notify.TheHive.APIKeyEnv)}
+	}
+	if cfg.Notify.Jira.Enabled {
+		out["jira"] = notify.Jira{BaseURL: cfg.Notify.Jira.BaseURL, Username: cfg.Notify.Jira.Username, Token: os.Getenv(cfg.Notify.Jira.TokenEnv), Project: cfg.Notify.Jira.Project, IssueType: cfg.Notify.Jira.IssueType}
 	}
 	return out
 }
@@ -1097,7 +1123,15 @@ func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, 
 			}
 			if sender != nil {
 				payload, _ := json.Marshal(incident)
-				_ = db.Enqueue(ctx, id, "webhook", payload)
+				channels := []string{"webhook"}
+				if fanout, ok := sender.(interface{ Channels() []string }); ok {
+					channels = fanout.Channels()
+				}
+				for _, channel := range channels {
+					if err := db.Enqueue(ctx, id, channel, payload); err != nil {
+						fmt.Fprintln(os.Stderr, "enqueue notification:", err)
+					}
+				}
 			}
 		}
 		if sender != nil {

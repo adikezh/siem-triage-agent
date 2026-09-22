@@ -46,3 +46,27 @@ enrichment:
   virustotal:
     base_url: https://www.virustotal.com/api/v3
     api_key_env: VIRUSTOTAL_API_KEY
+notify:
+  telegram:
+    enabled: false
+    token_env: TELEGRAM_BOT_TOKEN
+    chat_id: ""
+    base_url: https://api.telegram.org
+  slack:
+    enabled: false
+    url: ""
+  iris:
+    enabled: false
+    url: ""
+    api_key_env: IRIS_API_KEY
+  thehive:
+    enabled: false
+    url: ""
+    api_key_env: THEHIVE_API_KEY
+  jira:
+    enabled: false
+    base_url: ""
+    username: ""
+    token_env: JIRA_TOKEN
+    project: SOC
+    issue_type: Task
