@@ -31,9 +31,18 @@ type Config struct {
 		} `yaml:"virustotal"`
 	} `yaml:"enrichment"`
 	Triage struct {
-		LLMThreshold int    `yaml:"llm_threshold"`
-		Mode         string `yaml:"mode"`
+		LLMThreshold int        `yaml:"llm_threshold"`
+		Mode         string     `yaml:"mode"`
+		Providers    []Provider `yaml:"providers"`
 	} `yaml:"triage"`
+}
+
+type Provider struct {
+	Name      string `yaml:"name"`
+	Type      string `yaml:"type"`
+	BaseURL   string `yaml:"base_url"`
+	Model     string `yaml:"model"`
+	APIKeyEnv string `yaml:"api_key_env"`
 }
 
 func Defaults() Config {

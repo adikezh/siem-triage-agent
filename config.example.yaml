@@ -8,7 +8,17 @@ correlation:
   suppressions_file: configs/suppressions.example.yaml
 triage:
   llm_threshold: 40
-  mode: rule-only
+  mode: rule-only # set to llm to enable the first configured provider
+  providers:
+    - name: local
+      type: ollama
+      base_url: http://localhost:11434
+      model: qwen2.5:7b
+    # - name: cloud
+    #   type: anthropic
+    #   base_url: https://api.anthropic.com
+    #   model: claude-3-5-haiku-latest
+    #   api_key_env: ANTHROPIC_API_KEY
 enrichment:
   assets_file: configs/assets.example.yaml
   ioc_file: configs/ioc.example.yaml
