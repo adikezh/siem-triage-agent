@@ -155,6 +155,22 @@ func TestIncidentFilters(t *testing.T) {
 	}
 }
 
+func TestLatestIncidentByFingerprint(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "triage.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	now := time.Now().UTC()
+	if err = s.SaveIncident(context.Background(), map[string]string{}, "i", "same", "medium", 50, 2, now, now); err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.LatestIncidentByFingerprint(context.Background(), "same")
+	if err != nil || r.ID != "i" || r.AlertCount != 2 {
+		t.Fatalf("record=%#v err=%v", r, err)
+	}
+}
+
 func TestPruneRetention(t *testing.T) {
 	s, err := Open(filepath.Join(t.TempDir(), "triage.db"))
 	if err != nil {

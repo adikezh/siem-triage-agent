@@ -472,6 +472,14 @@ func (s *Store) GetIncident(ctx context.Context, id string) (Record, error) {
 	return r, err
 }
 
+func (s *Store) LatestIncidentByFingerprint(ctx context.Context, fingerprint string) (Record, error) {
+	var r Record
+	var p []byte
+	err := s.db.QueryRowContext(ctx, `SELECT id,fingerprint,first_seen,last_seen,alert_count,score,severity,payload FROM incidents WHERE fingerprint=? ORDER BY last_seen DESC LIMIT 1`, fingerprint).Scan(&r.ID, &r.Fingerprint, &r.FirstSeen, &r.LastSeen, &r.AlertCount, &r.Score, &r.Severity, &p)
+	r.Payload = p
+	return r, err
+}
+
 func (s *Store) FalsePositiveCount(ctx context.Context, fingerprint string) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM feedback f JOIN incidents i ON i.id=f.incident_id WHERE i.fingerprint=? AND f.verdict='fp'`, fingerprint).Scan(&n)

@@ -88,7 +88,7 @@ func TestPollWazuhPersistsAlertAndIncident(t *testing.T) {
 	defer db.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go pollWazuh(ctx, db, ingest.WazuhClient{BaseURL: srv.URL, Index: "alerts-*"}, time.Hour, nil, "")
+	go pollWazuh(ctx, db, ingest.WazuhClient{BaseURL: srv.URL, Index: "alerts-*"}, time.Hour, 15*time.Minute, 6*time.Hour, nil, "")
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		rows, e := db.ListIncidents(ctx)

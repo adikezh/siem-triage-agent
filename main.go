@@ -721,7 +721,7 @@ func serve(args []string) {
 		if *webhookURL != "" {
 			sender = notify.Webhook{URL: *webhookURL, Secret: webhookSecret}
 		}
-		go pollWazuh(context.Background(), db, ingest.WazuhClient{BaseURL: *sourceURL, Index: *sourceIndex, Username: *sourceUser, Password: password}, *sourceInterval, sender, cfg.Correlation.SuppressionsFile)
+		go pollWazuh(context.Background(), db, ingest.WazuhClient{BaseURL: *sourceURL, Index: *sourceIndex, Username: *sourceUser, Password: password}, *sourceInterval, cfg.Correlation.Window, cfg.Correlation.MaxIncidentAge, sender, cfg.Correlation.SuppressionsFile)
 	}
 	fmt.Println("listening on", *addr)
 	if (*tlsCert == "") != (*tlsKey == "") {
@@ -738,7 +738,7 @@ func serve(args []string) {
 	}
 }
 
-func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, interval time.Duration, sender pipeline.Sender, suppressionFile string) {
+func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, interval, correlationWindow, maxIncidentAge time.Duration, sender pipeline.Sender, suppressionFile string) {
 	const sourceName = "wazuh-live"
 	saved, err := db.LoadCursor(ctx, sourceName)
 	if err != nil {
@@ -784,8 +784,21 @@ func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, 
 				accepted = append(accepted, alert)
 			}
 		}
-		for _, incident := range groupWithWindow(accepted, 15*time.Minute, 6*time.Hour) {
+		for _, incident := range groupWithWindow(accepted, correlationWindow, maxIncidentAge) {
 			id := incident.Fingerprint + "/" + incident.FirstSeen.Format(time.RFC3339Nano)
+			if previous, lookupErr := db.LatestIncidentByFingerprint(ctx, incident.Fingerprint); lookupErr == nil {
+				oldFirst, _ := time.Parse(time.RFC3339Nano, previous.FirstSeen)
+				oldLast, _ := time.Parse(time.RFC3339Nano, previous.LastSeen)
+				if !oldLast.IsZero() && !incident.FirstSeen.Before(oldLast) && incident.FirstSeen.Sub(oldLast) <= correlationWindow && incident.LastSeen.Sub(oldFirst) <= maxIncidentAge {
+					incident.FirstSeen = oldFirst
+					incident.AlertCount += previous.AlertCount
+					if previous.Score > incident.Score {
+						incident.Score = previous.Score
+					}
+					incident.Severity = scoring.Severity(incident.Score)
+					id = previous.ID
+				}
+			}
 			if err := db.SaveIncident(ctx, incident, id, incident.Fingerprint, incident.Severity, incident.Score, incident.AlertCount, incident.FirstSeen, incident.LastSeen); err != nil {
 				fmt.Fprintln(os.Stderr, "save incident:", err)
 				return
