@@ -5,7 +5,7 @@ storage:
 correlation:
   window: 15m
   max_incident_age: 6h
-  suppressions_file: configs/suppressions.yaml
+  suppressions_file: configs/suppressions.example.yaml
 triage:
   llm_threshold: 40
   mode: rule-only

@@ -2,7 +2,7 @@
 
 - [x] SQLite WAL store and schema migration; cursor/outbox still pending.
 - [ ] Wazuh/OpenSearch polling and restart proof.
-- [~] YAML config and suppression matcher library are present; wiring suppression decisions into ingest/storage and audit chain remains.
+- [~] YAML config and suppression decisions are wired into offline ingest; persistent suppression audit chain and UI/DB-managed rules remain.
 - [ ] Asset/history/GeoIP/threat-intel enrichment.
 - [ ] Full scoring formula and table tests.
 - [ ] LLM providers, schema validation, retry/fallback, PII redaction and budget limits.

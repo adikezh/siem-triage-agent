@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/adikezh/siem-triage-agent/internal/config"
+	"github.com/adikezh/siem-triage-agent/internal/rules"
 	"github.com/adikezh/siem-triage-agent/internal/store"
 )
 
@@ -23,6 +24,9 @@ type Alert struct {
 	RuleLevel int            `json:"rule_level"`
 	Agent     map[string]any `json:"agent"`
 	SrcIP     string         `json:"src_ip"`
+	Groups    []string       `json:"groups"`
+	RuleDesc  string         `json:"rule_description"`
+	Tag       string         `json:"tag,omitempty"`
 }
 type Incident struct {
 	Fingerprint string    `json:"fingerprint"`
@@ -31,6 +35,7 @@ type Incident struct {
 	AlertCount  int       `json:"alert_count"`
 	Score       int       `json:"score"`
 	Severity    string    `json:"severity"`
+	Tags        []string  `json:"tags,omitempty"`
 }
 
 func main() {
@@ -74,6 +79,13 @@ func run(args []string) {
 	defer f.Close()
 	var alerts []Alert
 	seen := map[string]bool{}
+	var suppressions []rules.Suppression
+	if cfg.Correlation.SuppressionsFile != "" {
+		suppressions, err = rules.Load(cfg.Correlation.SuppressionsFile)
+		if err != nil {
+			panic(err)
+		}
+	}
 	s := bufio.NewScanner(f)
 	for s.Scan() {
 		var a Alert
@@ -87,6 +99,17 @@ func run(args []string) {
 			continue
 		}
 		seen[a.ID] = true
+		if len(suppressions) > 0 {
+			agentID, _ := a.Agent["id"].(string)
+			d := rules.Evaluate(rules.Alert{RuleID: a.RuleID, RuleDesc: a.RuleDesc, SrcIP: a.SrcIP, Groups: a.Groups, AgentID: agentID}, suppressions, time.Now().UTC())
+			if d.Suppressed {
+				continue
+			}
+			if d.Downgrade && a.RuleLevel > 3 {
+				a.RuleLevel = 3
+			}
+			a.Tag = d.Tag
+		}
 		alerts = append(alerts, a)
 	}
 	sortAlerts(alerts)
@@ -133,11 +156,26 @@ func groupWithWindow(as []Alert, window, maxAge time.Duration) []Incident {
 		fp := a.RuleID + "|" + agent + "|" + a.SrcIP
 		i, ok := m[fp]
 		if !ok || a.Timestamp.Sub(out[i].LastSeen) > window || a.Timestamp.Sub(out[i].FirstSeen) > maxAge {
-			out = append(out, Incident{Fingerprint: fp, FirstSeen: a.Timestamp, LastSeen: a.Timestamp, AlertCount: 1, Score: score(a.RuleLevel), Severity: severity(score(a.RuleLevel))})
+			inc := Incident{Fingerprint: fp, FirstSeen: a.Timestamp, LastSeen: a.Timestamp, AlertCount: 1, Score: score(a.RuleLevel), Severity: severity(score(a.RuleLevel))}
+			if a.Tag != "" {
+				inc.Tags = []string{a.Tag}
+			}
+			out = append(out, inc)
 			m[fp] = len(out) - 1
 		} else {
 			out[i].LastSeen = a.Timestamp
 			out[i].AlertCount++
+			if a.Tag != "" {
+				found := false
+				for _, tag := range out[i].Tags {
+					if tag == a.Tag {
+						found = true
+					}
+				}
+				if !found {
+					out[i].Tags = append(out[i].Tags, a.Tag)
+				}
+			}
 		}
 	}
 	return out

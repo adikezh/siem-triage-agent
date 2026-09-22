@@ -1,0 +1,4 @@
+storage:
+  path: data/triage-drop.db
+correlation:
+  suppressions_file: testdata/suppressions-drop.yaml

@@ -1,0 +1,6 @@
+suppressions:
+  - match:
+      src_ip: "203.0.113.5"
+    action: drop
+    reason: "integration test drop"
+    created_by: "test"
