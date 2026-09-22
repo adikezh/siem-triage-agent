@@ -733,8 +733,24 @@ func serve(args []string) {
 		for _, x := range rows {
 			counts[x.Severity]++
 		}
+		m, metricsErr := db.Metrics(r.Context())
+		if metricsErr != nil {
+			http.Error(w, "storage error", 500)
+			return
+		}
+		feedbackTotal := m.FeedbackTP + m.FeedbackFP
+		fpRate := 0.0
+		if feedbackTotal > 0 {
+			fpRate = float64(m.FeedbackFP) / float64(feedbackTotal)
+		}
 		w.Header().Set("content-type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"total": len(rows), "by_severity": counts})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"total":       len(rows),
+			"by_severity": counts,
+			"feedback":    map[string]any{"tp": m.FeedbackTP, "fp": m.FeedbackFP, "ack": m.FeedbackAck, "fp_rate": fpRate},
+			"llm":         map[string]any{"calls": m.LLMCalls, "used": m.LLMUsed, "errors": m.LLMErrors, "avg_latency_ms": m.LLMLatencyMS},
+			"outbox":      map[string]any{"pending": m.OutboxPending, "sent": m.OutboxSent},
+		})
 	})))
 	http.Handle("/api/assets", protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
