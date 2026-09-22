@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"github.com/adikezh/siem-triage-agent/internal/ingest"
 	"github.com/adikezh/siem-triage-agent/internal/store"
 	"net/http"
 	"net/http/httptest"
@@ -70,6 +71,31 @@ func TestSlackSignatureAuth(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("invalid signature status=%d", w.Code)
 	}
+}
+
+func TestPollWazuhPersistsAlertAndIncident(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"hits":{"hits":[{"_id":"live-1","_source":{"@timestamp":"2026-09-23T08:00:00Z","rule":{"id":"100","level":8,"description":"test","groups":["authentication_failed"]},"agent":{"id":"a1"},"data":{"srcip":"203.0.113.8"}},"sort":["2026-09-23T08:00:00Z","live-1"]}]}}`))
+	}))
+	defer srv.Close()
+	db, err := store.Open(filepath.Join(t.TempDir(), "live.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go pollWazuh(ctx, db, ingest.WazuhClient{BaseURL: srv.URL, Index: "alerts-*"}, time.Hour)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		rows, e := db.ListIncidents(ctx)
+		if e == nil && len(rows) == 1 {
+			cancel()
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("poller did not persist incident")
 }
 
 func BenchmarkGroup100K(b *testing.B) {

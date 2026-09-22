@@ -749,9 +749,22 @@ func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, 
 			return
 		}
 		for _, hit := range hits {
-			if err := db.SaveAlert(ctx, hit.ID, "wazuh", hit.Timestamp, ingest.NormalizeHit(hit)); err != nil {
+			payload := ingest.NormalizeHit(hit)
+			if err := db.SaveAlert(ctx, hit.ID, "wazuh", hit.Timestamp, payload); err != nil {
 				fmt.Fprintln(os.Stderr, "save alert:", err)
 				return
+			}
+			var alert Alert
+			encoded, _ := json.Marshal(payload)
+			if err := json.Unmarshal(encoded, &alert); err == nil {
+				incidents := groupWithWindow([]Alert{alert}, 15*time.Minute, 6*time.Hour)
+				for _, incident := range incidents {
+					id := incident.Fingerprint + "/" + incident.FirstSeen.Format(time.RFC3339Nano)
+					if err := db.SaveIncident(ctx, incident, id, incident.Fingerprint, incident.Severity, incident.Score, incident.AlertCount, incident.FirstSeen, incident.LastSeen); err != nil {
+						fmt.Fprintln(os.Stderr, "save incident:", err)
+						return
+					}
+				}
 			}
 		}
 		b, _ := json.Marshal(next.Sort)
