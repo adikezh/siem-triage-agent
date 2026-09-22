@@ -4,6 +4,31 @@ Core is licensed under Apache-2.0. See [LICENSE](LICENSE).
 
 Community core: NDJSON ingest, deduplication, 15-minute correlation, deterministic scoring, CLI, health API and a non-root container.
 
+## Architecture
+
+```mermaid
+flowchart LR
+  S[Wazuh / OpenSearch / NDJSON] --> I[Ingest + cursor]
+  I --> C[Correlation + suppression]
+  C --> E[Assets / IOC / GeoIP / history]
+  E --> T[Deterministic score]
+  T --> L{Optional LLM}
+  L --> O[Incident + audit + outbox]
+  T --> O
+  O --> N[Telegram / Slack / webhook / Jira / IRIS / TheHive]
+  O --> U[Dashboard / REST / reports / metrics]
+```
+
+## How it compares
+
+| Option | Best fit | Triage correlation and feedback | Self-hosted delivery |
+| --- | --- | --- | --- |
+| SIEM Triage Agent Community | Small SOCs and lab-to-production pilots | Built-in deterministic score, optional LLM, TP/FP/Ack feedback | Single Go binary, Docker, Helm |
+| SIEM-native rules only | Teams needing basic filtering | Rules and suppression, limited incident feedback loop | Depends on the SIEM deployment |
+| Generic SOAR | Mature SOC orchestration | Broad playbooks, heavier integration and operations | Usually a larger platform |
+
+The table describes scope differences, not a claim that this project replaces a full SIEM or SOAR platform.
+
 Quick start:
 
     go run . run --file testdata/example.ndjson --db data/triage.db
