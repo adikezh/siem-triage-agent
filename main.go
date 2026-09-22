@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/adikezh/siem-triage-agent/internal/config"
 	"github.com/adikezh/siem-triage-agent/internal/store"
 )
 
@@ -53,7 +54,15 @@ func run(args []string) {
 	file := fs.String("file", "", "NDJSON input")
 	out := fs.String("out", "", "JSON output")
 	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
+	configPath := fs.String("config", "", "YAML configuration path")
 	fs.Parse(args)
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		panic(err)
+	}
+	if *configPath != "" && *dbPath == "data/triage.db" {
+		*dbPath = cfg.Storage.Path
+	}
 	if *file == "" {
 		fmt.Fprintln(os.Stderr, "--file is required")
 		os.Exit(2)
@@ -81,7 +90,7 @@ func run(args []string) {
 		alerts = append(alerts, a)
 	}
 	sortAlerts(alerts)
-	inc := group(alerts)
+	inc := groupWithWindow(alerts, cfg.Correlation.Window, cfg.Correlation.MaxIncidentAge)
 	if err := os.MkdirAll(filepath.Dir(*dbPath), 0700); err != nil {
 		panic(err)
 	}
@@ -114,13 +123,16 @@ func sortAlerts(a []Alert) {
 	}
 }
 func group(as []Alert) []Incident {
+	return groupWithWindow(as, 15*time.Minute, 6*time.Hour)
+}
+func groupWithWindow(as []Alert, window, maxAge time.Duration) []Incident {
 	m := map[string]int{}
 	var out []Incident
 	for _, a := range as {
 		agent, _ := a.Agent["id"].(string)
 		fp := a.RuleID + "|" + agent + "|" + a.SrcIP
 		i, ok := m[fp]
-		if !ok || a.Timestamp.Sub(out[i].LastSeen) > 15*time.Minute || a.Timestamp.Sub(out[i].FirstSeen) > 6*time.Hour {
+		if !ok || a.Timestamp.Sub(out[i].LastSeen) > window || a.Timestamp.Sub(out[i].FirstSeen) > maxAge {
 			out = append(out, Incident{Fingerprint: fp, FirstSeen: a.Timestamp, LastSeen: a.Timestamp, AlertCount: 1, Score: score(a.RuleLevel), Severity: severity(score(a.RuleLevel))})
 			m[fp] = len(out) - 1
 		} else {
@@ -153,7 +165,15 @@ func serve(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	addr := fs.String("listen", ":8080", "address")
 	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
+	configPath := fs.String("config", "", "YAML configuration path")
 	fs.Parse(args)
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		panic(err)
+	}
+	if *configPath != "" && *dbPath == "data/triage.db" {
+		*dbPath = cfg.Storage.Path
+	}
 	db, err := store.Open(*dbPath)
 	if err != nil {
 		panic(err)
