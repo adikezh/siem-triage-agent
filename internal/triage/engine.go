@@ -31,6 +31,7 @@ type Result struct {
 }
 type Engine struct {
 	Threshold     int
+	Language      string
 	Provider      llm.Provider
 	Model         string
 	InternalCIDRs []string
@@ -50,7 +51,7 @@ func (e Engine) Analyze(ctx context.Context, c Case) Result {
 	if e.Now != nil {
 		now = e.Now()
 	}
-	prompt, hash := llm.BuildPrompt(c.Prompt, e.InternalCIDRs)
+	prompt, hash := llm.BuildPromptLanguage(c.Prompt, e.InternalCIDRs, e.Language)
 	started := now
 	r, err := e.Provider.Complete(ctx, llm.Request{Model: e.Model, Prompt: prompt, MaxTokens: 800})
 	out.Trace = Trace{Provider: e.Provider.Name(), PromptHash: hash, Model: e.Model, Used: true, LatencyMS: time.Since(started).Milliseconds()}

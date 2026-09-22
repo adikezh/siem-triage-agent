@@ -25,6 +25,26 @@ func TestPromptRedactsAndHashes(t *testing.T) {
 		t.Fatalf("unsafe prompt: %s", p)
 	}
 }
+
+func TestPromptLanguage(t *testing.T) {
+	for _, tc := range []struct {
+		language string
+		want     string
+	}{
+		{language: "en", want: "Classify the SIEM incident"},
+		{language: "ru", want: "Классифицируй SIEM-инцидент"},
+		{language: "kk", want: "SIEM оқиғасын жікте"},
+	} {
+		p, _ := BuildPromptLanguage(PromptInput{Description: "test"}, nil, tc.language)
+		if !strings.Contains(p, tc.want) {
+			t.Fatalf("language=%s prompt=%q", tc.language, p)
+		}
+	}
+	unknown, _ := BuildPromptLanguage(PromptInput{}, nil, "xx")
+	if !strings.Contains(unknown, "Classify the SIEM incident") {
+		t.Fatal("unknown language did not fall back to English")
+	}
+}
 func TestChainFallbackAndBudget(t *testing.T) {
 	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	b := &Budget{CallsPerHour: 1, CostPerCall: 1, USDPerDay: 2}

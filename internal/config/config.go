@@ -36,6 +36,7 @@ type Config struct {
 	Triage struct {
 		LLMThreshold int        `yaml:"llm_threshold"`
 		Mode         string     `yaml:"mode"`
+		Language     string     `yaml:"language"`
 		Providers    []Provider `yaml:"providers"`
 		Budget       Budget     `yaml:"budget"`
 	} `yaml:"triage"`
@@ -113,6 +114,7 @@ func Defaults() Config {
 	c.Correlation.Grouping.Default = []string{"rule.id", "agent.id", "src_ip"}
 	c.Triage.LLMThreshold = 40
 	c.Triage.Mode = "rule-only"
+	c.Triage.Language = "en"
 	return c
 }
 func Load(path string) (Config, error) {
@@ -144,6 +146,9 @@ func Load(path string) (Config, error) {
 	}
 	if c.Triage.Mode == "" {
 		c.Triage.Mode = "rule-only"
+	}
+	if c.Triage.Language == "" {
+		c.Triage.Language = "en"
 	}
 	return c, nil
 }

@@ -21,6 +21,7 @@ correlation:
 triage:
   llm_threshold: 40
   mode: rule-only # set to llm to enable the first configured provider
+  language: ru # en, ru or kk
   providers:
     - name: local
       type: ollama

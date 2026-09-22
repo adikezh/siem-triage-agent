@@ -394,7 +394,7 @@ func run(args []string) {
 			key = os.Getenv(*llmKeyEnv)
 		}
 		p := llm.OpenAICompatible{BaseURL: *llmURL, APIKey: key}
-		engine = &triageengine.Engine{Threshold: cfg.Triage.LLMThreshold, Provider: p, Model: *llmModel, InternalCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"}}
+		engine = &triageengine.Engine{Threshold: cfg.Triage.LLMThreshold, Language: cfg.Triage.Language, Provider: p, Model: *llmModel, InternalCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"}}
 	} else if len(cfg.Triage.Providers) > 0 && cfg.Triage.Mode != "rule-only" {
 		providers := make([]llm.Provider, 0, len(cfg.Triage.Providers))
 		model := cfg.Triage.Providers[0].Model
@@ -414,7 +414,7 @@ func run(args []string) {
 			providers = append(providers, provider)
 		}
 		budget := &llm.Budget{CallsPerHour: cfg.Triage.Budget.CallsPerHour, USDPerDay: cfg.Triage.Budget.USDPerDay, CostPerCall: cfg.Triage.Budget.CostPerCall}
-		engine = &triageengine.Engine{Threshold: cfg.Triage.LLMThreshold, Provider: llm.ChainProvider{Chain: llm.Chain{Providers: providers, Budget: budget}}, Model: model, InternalCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"}}
+		engine = &triageengine.Engine{Threshold: cfg.Triage.LLMThreshold, Language: cfg.Triage.Language, Provider: llm.ChainProvider{Chain: llm.Chain{Providers: providers, Budget: budget}}, Model: model, InternalCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"}}
 	}
 	for _, i := range inc {
 		fpCount, hasTP, e := db.FingerprintStats(context.Background(), i.Fingerprint, time.Now().UTC().Add(-30*24*time.Hour))
@@ -1058,7 +1058,7 @@ func configuredEngine(cfg config.Config) *triageengine.Engine {
 		providers = append(providers, provider)
 	}
 	budget := &llm.Budget{CallsPerHour: cfg.Triage.Budget.CallsPerHour, USDPerDay: cfg.Triage.Budget.USDPerDay, CostPerCall: cfg.Triage.Budget.CostPerCall}
-	return &triageengine.Engine{Threshold: cfg.Triage.LLMThreshold, Provider: llm.ChainProvider{Chain: llm.Chain{Providers: providers, Budget: budget}}, Model: model, InternalCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"}}
+	return &triageengine.Engine{Threshold: cfg.Triage.LLMThreshold, Language: cfg.Triage.Language, Provider: llm.ChainProvider{Chain: llm.Chain{Providers: providers, Budget: budget}}, Model: model, InternalCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"}}
 }
 
 func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, interval, correlationWindow, maxIncidentAge time.Duration, grouping config.Grouping, internalCIDRs []string, assets map[string]enrich.Asset, iocs enrich.IOC, geoip *enrich.GeoIP, engine *triageengine.Engine, sender pipeline.Sender, suppressionFile string) {
