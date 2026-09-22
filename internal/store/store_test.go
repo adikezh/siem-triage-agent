@@ -23,4 +23,21 @@ func TestSQLitePersistenceAndFeedback(t *testing.T) {
 	if e = s.SaveLLMTrace(context.Background(), LLMTrace{IncidentID: "i1", Provider: "rule-only", Model: "", PromptHash: "abc"}); e != nil {
 		t.Fatal(e)
 	}
+	if e = s.SaveCursor(context.Background(), "wazuh", Cursor{Timestamp: now, SortJSON: []byte(`["x"]`)}); e != nil {
+		t.Fatal(e)
+	}
+	c, _ := s.LoadCursor(context.Background(), "wazuh")
+	if c.Timestamp.IsZero() {
+		t.Fatal("cursor not persisted")
+	}
+	if e = s.Enqueue(context.Background(), "i1", "webhook", []byte(`{"x":1}`)); e != nil {
+		t.Fatal(e)
+	}
+	items, e := s.PendingOutbox(context.Background(), 10)
+	if e != nil || len(items) != 1 {
+		t.Fatalf("outbox %#v %v", items, e)
+	}
+	if e = s.MarkOutbox(context.Background(), items[0].ID, true, time.Now().Add(time.Hour), ""); e != nil {
+		t.Fatal(e)
+	}
 }

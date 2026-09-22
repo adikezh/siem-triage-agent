@@ -1,6 +1,6 @@
 # Delivery backlog
 
-- [x] SQLite WAL store and schema migration; cursor/outbox still pending.
+- [~] SQLite WAL store, source cursor and idempotent outbox schema/API are present and tested; ingest loop/retry worker still pending.
 - [~] Wazuh/OpenSearch-compatible search-after client with cursor test is present; persistent cursor, normalized ingest wiring and live Wazuh proof remain.
 - [~] YAML config and suppression decisions are wired into offline ingest; persistent suppression audit chain and UI/DB-managed rules remain.
 - [ ] Asset/history/GeoIP/threat-intel enrichment.
