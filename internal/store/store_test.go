@@ -40,4 +40,7 @@ func TestSQLitePersistenceAndFeedback(t *testing.T) {
 	if e = s.MarkOutbox(context.Background(), items[0].ID, true, time.Now().Add(time.Hour), ""); e != nil {
 		t.Fatal(e)
 	}
+	if n, e := s.FalsePositiveCount(context.Background(), "r|a|ip"); e != nil || n != 1 {
+		t.Fatalf("fp count=%d %v", n, e)
+	}
 }

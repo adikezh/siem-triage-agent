@@ -166,4 +166,10 @@ func (s *Store) GetIncident(ctx context.Context, id string) (Record, error) {
 	return r, err
 }
 
+func (s *Store) FalsePositiveCount(ctx context.Context, fingerprint string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM feedback f JOIN incidents i ON i.id=f.incident_id WHERE i.fingerprint=? AND f.verdict='fp'`, fingerprint).Scan(&n)
+	return n, err
+}
+
 func (s *Store) Close() error { return s.db.Close() }

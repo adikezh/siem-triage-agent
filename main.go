@@ -153,6 +153,15 @@ func run(args []string) {
 		engine = &triageengine.Engine{Threshold: cfg.Triage.LLMThreshold, Provider: p, Model: *llmModel, InternalCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"}}
 	}
 	for _, i := range inc {
+		fpCount, e := db.FalsePositiveCount(context.Background(), i.Fingerprint)
+		if e != nil {
+			panic(e)
+		}
+		if fpCount >= 20 {
+			s := scoring.Score(scoring.Input{RuleLevel: i.RuleLevel, Malicious: i.Malicious, Criticality: i.Criticality, HighImpactTactic: i.HighImpactTactic, InternalWhitelist: i.Internal, FrequentFalsePositive: true})
+			i.Score = s
+			i.Severity = scoring.Severity(s)
+		}
 		if engine != nil {
 			tr := engine.Analyze(context.Background(), triageengine.Case{Rule: scoring.Input{RuleLevel: i.RuleLevel, Malicious: i.Malicious, Criticality: i.Criticality, HighImpactTactic: i.HighImpactTactic, InternalWhitelist: i.Internal}, RuleSeverity: i.Severity, Prompt: llm.PromptInput{Rule: i.Fingerprint, Description: "correlated SIEM incident", SourceIP: strings.Split(i.Fingerprint, "|")[2]}})
 			i.Score = tr.Score
