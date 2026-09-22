@@ -930,6 +930,24 @@ func serve(args []string) {
 	http.Handle("/api/integrations/slack/callback", slackCallback)
 	serveCtx, cancelServe := context.WithCancel(context.Background())
 	defer cancelServe()
+	prune := func() {
+		if err := db.Prune(context.Background(), time.Now().UTC().Add(-cfg.Storage.Retention.Alerts), time.Now().UTC().Add(-cfg.Storage.Retention.LLMCalls)); err != nil {
+			fmt.Fprintln(os.Stderr, "retention prune:", err)
+		}
+	}
+	prune()
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-serveCtx.Done():
+				return
+			case <-ticker.C:
+				prune()
+			}
+		}
+	}()
 	if *sourceURL != "" {
 		if *sourceInterval <= 0 {
 			panic("source-interval must be positive")
