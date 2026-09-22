@@ -31,3 +31,31 @@ func TestRejectsUnsupportedAction(t *testing.T) {
 		t.Fatalf("expected action rejection, got %v", e)
 	}
 }
+
+func TestOllamaProvider(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/chat" {
+			t.Errorf("path=%s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"message":{"content":"{\"severity\":\"medium\",\"summary\":\"ok\",\"actions\":[],\"fp_probability\":0.2}"}}`))
+	}))
+	defer srv.Close()
+	got, err := (Ollama{BaseURL: srv.URL}).Complete(context.Background(), Request{Model: "qwen", Prompt: "x"})
+	if err != nil || got.Severity != "medium" {
+		t.Fatalf("got=%#v err=%v", got, err)
+	}
+}
+
+func TestAnthropicProvider(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-api-key") != "key" || r.Header.Get("anthropic-version") == "" {
+			t.Error("missing Anthropic headers")
+		}
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"{\"severity\":\"critical\",\"summary\":\"ok\",\"actions\":[\"investigate\"],\"fp_probability\":0.0}"}]}`))
+	}))
+	defer srv.Close()
+	got, err := (Anthropic{BaseURL: srv.URL, APIKey: "key"}).Complete(context.Background(), Request{Model: "claude", Prompt: "x"})
+	if err != nil || got.Severity != "critical" {
+		t.Fatalf("got=%#v err=%v", got, err)
+	}
+}
