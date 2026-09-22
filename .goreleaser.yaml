@@ -1,0 +1,48 @@
+version: 2
+project_name: siem-triage-agent
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - id: triage
+    main: .
+    binary: triage
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: [-s -w -X main.version={{ .Version }}]
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+checksum:
+  name_template: checksums.txt
+sboms:
+  - artifacts: archive
+    documents:
+      - "{{ .ArtifactName }}.spdx.json"
+nfpms:
+  - id: packages
+    package_name: siem-triage-agent
+    vendor: AIDIA CyberTech
+    homepage: https://github.com/adikezh/siem-triage-agent
+    maintainer: AIDIA CyberTech
+    description: SIEM alert triage agent
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    contents:
+      - src: configs
+        dst: /etc/siem-triage-agent/configs
+        type: tree
+      - src: deploy/helm/siem-triage-agent
+        dst: /usr/share/siem-triage-agent/helm
+        type: tree
+docker_manifests:
+  - name_template: ghcr.io/adikezh/siem-triage-agent:{{ .Tag }}
+    image_templates:
+      - ghcr.io/adikezh/siem-triage-agent:{{ .Tag }}-amd64
+      - ghcr.io/adikezh/siem-triage-agent:{{ .Tag }}-arm64
+release:
+  github:
+    owner: adikezh
+    name: siem-triage-agent

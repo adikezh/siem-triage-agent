@@ -1,0 +1,14 @@
+version: '3'
+tasks:
+  test:
+    cmds: [go test ./...]
+  vet:
+    cmds: [go vet ./...]
+  build:
+    cmds: [go build -trimpath -o triage .]
+  demo:
+    cmds: [docker compose up --build]
+  helm-lint:
+    cmds: [helm lint deploy/helm/siem-triage-agent]
+  report:
+    cmds: [go run . report --db data/triage.db --period 7d --format md --out weekly.md]
