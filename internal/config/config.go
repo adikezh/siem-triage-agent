@@ -20,10 +20,11 @@ type Config struct {
 		Grouping         Grouping      `yaml:"grouping"`
 	} `yaml:"correlation"`
 	Enrichment struct {
-		AssetsFile string `yaml:"assets_file"`
-		IOCFile    string `yaml:"ioc_file"`
-		GeoIPFile  string `yaml:"geoip_file"`
-		AbuseIPDB  struct {
+		AssetsFile    string   `yaml:"assets_file"`
+		IOCFile       string   `yaml:"ioc_file"`
+		GeoIPFile     string   `yaml:"geoip_file"`
+		InternalCIDRs []string `yaml:"internal_cidrs"`
+		AbuseIPDB     struct {
 			BaseURL   string `yaml:"base_url"`
 			APIKeyEnv string `yaml:"api_key_env"`
 		} `yaml:"abuseipdb"`

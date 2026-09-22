@@ -105,7 +105,7 @@ func TestPollWazuhPersistsAlertAndIncident(t *testing.T) {
 	defer db.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go pollWazuh(ctx, db, ingest.WazuhClient{BaseURL: srv.URL, Index: "alerts-*"}, time.Hour, 15*time.Minute, 6*time.Hour, config.Grouping{Default: []string{"rule.id", "agent.id", "src_ip"}}, map[string]enrich.Asset{"203.0.113.8": {IP: "203.0.113.8", Criticality: 5}}, enrich.IOC{IPs: map[string]bool{"203.0.113.8": true}}, nil, nil, "")
+	go pollWazuh(ctx, db, ingest.WazuhClient{BaseURL: srv.URL, Index: "alerts-*"}, time.Hour, 15*time.Minute, 6*time.Hour, config.Grouping{Default: []string{"rule.id", "agent.id", "src_ip"}}, nil, map[string]enrich.Asset{"203.0.113.8": {IP: "203.0.113.8", Criticality: 5}}, enrich.IOC{IPs: map[string]bool{"203.0.113.8": true}}, nil, nil, "")
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		rows, e := db.ListIncidents(ctx)
@@ -139,7 +139,7 @@ func TestPollWazuhRunsConfiguredEngine(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	engine := &triageengine.Engine{Threshold: 1, Provider: liveTestProvider{}, Model: "test", InternalCIDRs: []string{}}
-	go pollWazuh(ctx, db, ingest.WazuhClient{BaseURL: srv.URL, Index: "alerts-*"}, time.Hour, 15*time.Minute, 6*time.Hour, config.Grouping{Default: []string{"rule.id", "agent.id", "src_ip"}}, nil, enrich.IOC{}, engine, nil, "")
+	go pollWazuh(ctx, db, ingest.WazuhClient{BaseURL: srv.URL, Index: "alerts-*"}, time.Hour, 15*time.Minute, 6*time.Hour, config.Grouping{Default: []string{"rule.id", "agent.id", "src_ip"}}, nil, nil, enrich.IOC{}, engine, nil, "")
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		rows, e := db.ListIncidents(ctx)

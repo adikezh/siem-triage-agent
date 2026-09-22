@@ -151,6 +151,7 @@ func rulesTest(args []string) {
 		if e = json.Unmarshal([]byte(s.Text()), &a); e != nil {
 			panic(e)
 		}
+		a.Internal = enrich.IsInternal(a.SrcIP, cfg.Enrichment.InternalCIDRs)
 		agentID, _ := a.Agent["id"].(string)
 		d := rules.Evaluate(rules.Alert{RuleID: a.RuleID, RuleDesc: a.RuleDesc, SrcIP: a.SrcIP, Groups: a.Groups, AgentID: agentID}, ss, time.Now().UTC())
 		if d.Suppressed {
@@ -773,7 +774,7 @@ func serve(args []string) {
 		if *webhookURL != "" {
 			sender = notify.Webhook{URL: *webhookURL, Secret: webhookSecret}
 		}
-		go pollWazuh(context.Background(), db, ingest.WazuhClient{BaseURL: *sourceURL, Index: *sourceIndex, Username: *sourceUser, Password: password}, *sourceInterval, cfg.Correlation.Window, cfg.Correlation.MaxIncidentAge, cfg.Correlation.Grouping, assets, iocs, engine, sender, cfg.Correlation.SuppressionsFile)
+		go pollWazuh(context.Background(), db, ingest.WazuhClient{BaseURL: *sourceURL, Index: *sourceIndex, Username: *sourceUser, Password: password}, *sourceInterval, cfg.Correlation.Window, cfg.Correlation.MaxIncidentAge, cfg.Correlation.Grouping, cfg.Enrichment.InternalCIDRs, assets, iocs, engine, sender, cfg.Correlation.SuppressionsFile)
 	}
 	fmt.Println("listening on", *addr)
 	if (*tlsCert == "") != (*tlsKey == "") {
@@ -815,7 +816,7 @@ func configuredEngine(cfg config.Config) *triageengine.Engine {
 	return &triageengine.Engine{Threshold: cfg.Triage.LLMThreshold, Provider: llm.ChainProvider{Chain: llm.Chain{Providers: providers, Budget: budget}}, Model: model, InternalCIDRs: []string{"10.0.0.0/8", "192.168.0.0/16"}}
 }
 
-func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, interval, correlationWindow, maxIncidentAge time.Duration, grouping config.Grouping, assets map[string]enrich.Asset, iocs enrich.IOC, engine *triageengine.Engine, sender pipeline.Sender, suppressionFile string) {
+func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, interval, correlationWindow, maxIncidentAge time.Duration, grouping config.Grouping, internalCIDRs []string, assets map[string]enrich.Asset, iocs enrich.IOC, engine *triageengine.Engine, sender pipeline.Sender, suppressionFile string) {
 	const sourceName = "wazuh-live"
 	saved, err := db.LoadCursor(ctx, sourceName)
 	if err != nil {
@@ -839,6 +840,7 @@ func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, 
 			var alert Alert
 			encoded, _ := json.Marshal(payload)
 			if err := json.Unmarshal(encoded, &alert); err == nil {
+				alert.Internal = enrich.IsInternal(alert.SrcIP, internalCIDRs)
 				agentID, _ := alert.Agent["id"].(string)
 				fingerprint := alert.RuleID + "|" + agentID + "|" + alert.SrcIP
 				decision := rules.Evaluate(rules.Alert{RuleID: alert.RuleID, RuleDesc: alert.RuleDesc, SrcIP: alert.SrcIP, Groups: alert.Groups, AgentID: agentID, Fingerprint: fingerprint}, suppressions, time.Now().UTC())
