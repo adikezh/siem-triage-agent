@@ -17,6 +17,12 @@ func TestSQLitePersistenceAndFeedback(t *testing.T) {
 	if e = s.SaveIncident(context.Background(), map[string]string{"x": "y"}, "i1", "r|a|ip", "medium", 50, 2, now, now); e != nil {
 		t.Fatal(e)
 	}
+	if e = s.SaveAlert(context.Background(), "a1", "file", now, map[string]string{"rule": "r"}); e != nil {
+		t.Fatal(e)
+	}
+	if e = s.SaveAlert(context.Background(), "a1", "file", now, map[string]string{"rule": "changed"}); e != nil {
+		t.Fatal(e)
+	}
 	if e = s.AddFeedback(context.Background(), "i1", "fp", "noise", "analyst"); e != nil {
 		t.Fatal(e)
 	}

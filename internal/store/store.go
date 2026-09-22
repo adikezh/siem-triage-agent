@@ -18,6 +18,15 @@ type Record struct {
 	Payload                                        json.RawMessage
 }
 
+func (s *Store) SaveAlert(ctx context.Context, id, source string, timestamp time.Time, payload any) error {
+	b, e := json.Marshal(payload)
+	if e != nil {
+		return e
+	}
+	_, e = s.db.ExecContext(ctx, `INSERT INTO alerts(id,source,timestamp,payload) VALUES(?,?,?,?) ON CONFLICT(id) DO NOTHING`, id, source, timestamp.UTC().Format(time.RFC3339Nano), b)
+	return e
+}
+
 func Open(path string) (*Store, error) {
 	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)")
 	if err != nil {

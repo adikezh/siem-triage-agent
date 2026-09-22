@@ -218,6 +218,11 @@ func run(args []string) {
 		panic(err)
 	}
 	defer db.Close()
+	for _, a := range alerts {
+		if e := db.SaveAlert(context.Background(), a.ID, "file", a.Timestamp, a); e != nil {
+			panic(e)
+		}
+	}
 	var engine *triageengine.Engine
 	if *llmURL != "" {
 		key := ""

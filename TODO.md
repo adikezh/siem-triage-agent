@@ -1,6 +1,6 @@
 # Delivery backlog
 
-- [~] SQLite WAL store, source cursor, idempotent outbox and retry/backoff dispatcher are present and tested; production sender wiring remains.
+- [~] SQLite WAL store saves normalized alerts and incidents, with source cursor, idempotent outbox and retry/backoff dispatcher; production sender wiring remains.
 - [~] Wazuh/OpenSearch-compatible search-after client and source→process→cursor→outbox worker are present; normalized domain ingest and live Wazuh proof remain.
 - [~] YAML config and suppression decisions are wired into offline ingest; persistent suppression audit chain and UI/DB-managed rules remain.
 - [~] YAML asset inventory and local IOC enrichment are wired into offline scoring; history/GeoIP/AbuseIPDB/VT enrichment remains.
