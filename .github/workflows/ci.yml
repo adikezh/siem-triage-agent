@@ -15,7 +15,7 @@ jobs:
       - run: go build -trimpath ./...
       - uses: golangci/golangci-lint-action@v7
         with:
-          version: v2.1.6
+          version: v2.13.2
           args: --timeout=5m --disable=errcheck
       - uses: azure/setup-helm@v4
       - run: helm lint deploy/helm/siem-triage-agent
