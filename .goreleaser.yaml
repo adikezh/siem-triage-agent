@@ -37,6 +37,15 @@ nfpms:
       - src: deploy/helm/siem-triage-agent
         dst: /usr/share/siem-triage-agent/helm
         type: tree
+dockers:
+  - image_templates:
+      - ghcr.io/adikezh/siem-triage-agent:{{ .Tag }}-amd64
+    build_flag_templates: ["--platform=linux/amd64"]
+    use: buildx
+  - image_templates:
+      - ghcr.io/adikezh/siem-triage-agent:{{ .Tag }}-arm64
+    build_flag_templates: ["--platform=linux/arm64"]
+    use: buildx
 docker_manifests:
   - name_template: ghcr.io/adikezh/siem-triage-agent:{{ .Tag }}
     image_templates:
