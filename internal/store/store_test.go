@@ -49,4 +49,7 @@ func TestSQLitePersistenceAndFeedback(t *testing.T) {
 	if n, e := s.FalsePositiveCount(context.Background(), "r|a|ip"); e != nil || n != 1 {
 		t.Fatalf("fp count=%d %v", n, e)
 	}
+	if rows, e := s.ListFeedback(context.Background()); e != nil || len(rows) != 1 || rows[0].Verdict != "fp" {
+		t.Fatalf("feedback=%#v %v", rows, e)
+	}
 }

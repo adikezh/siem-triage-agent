@@ -181,4 +181,26 @@ func (s *Store) FalsePositiveCount(ctx context.Context, fingerprint string) (int
 	return n, err
 }
 
+type FeedbackRecord struct {
+	IncidentID, Verdict, Comment, Actor, CreatedAt string
+	Payload                                        json.RawMessage
+}
+
+func (s *Store) ListFeedback(ctx context.Context) ([]FeedbackRecord, error) {
+	rows, e := s.db.QueryContext(ctx, `SELECT f.incident_id,f.verdict,f.comment,f.actor,f.created_at,i.payload FROM feedback f LEFT JOIN incidents i ON i.id=f.incident_id ORDER BY f.id`)
+	if e != nil {
+		return nil, e
+	}
+	defer rows.Close()
+	var out []FeedbackRecord
+	for rows.Next() {
+		var x FeedbackRecord
+		if e = rows.Scan(&x.IncidentID, &x.Verdict, &x.Comment, &x.Actor, &x.CreatedAt, &x.Payload); e != nil {
+			return nil, e
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) Close() error { return s.db.Close() }

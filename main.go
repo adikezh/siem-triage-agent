@@ -70,6 +70,12 @@ func main() {
 		serve(os.Args[2:])
 	case "report":
 		reportCommand(os.Args[2:])
+	case "feedback":
+		if len(os.Args) > 2 && os.Args[2] == "export" {
+			feedbackExport(os.Args[3:])
+		} else {
+			usage()
+		}
 	case "rules":
 		if len(os.Args) > 2 && os.Args[2] == "test" {
 			rulesTest(os.Args[3:])
@@ -444,7 +450,39 @@ func serve(args []string) {
 	}
 }
 func usage() {
-	fmt.Println("triage run --file alerts.ndjson [--out report.json]\ntriage rules test --file alerts.ndjson --config config.yaml\ntriage serve [--listen :8080]\ntriage report --db data/triage.db --period 7d --out weekly.md\ntriage version")
+	fmt.Println("triage run --file alerts.ndjson [--out report.json]\ntriage rules test --file alerts.ndjson --config config.yaml\ntriage feedback export --db data/triage.db --out feedback.jsonl\ntriage serve [--listen :8080]\ntriage report --db data/triage.db --period 7d --out weekly.md\ntriage version")
+}
+
+func feedbackExport(args []string) {
+	fs := flag.NewFlagSet("feedback export", flag.ExitOnError)
+	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
+	out := fs.String("out", "", "JSONL output path")
+	fs.Parse(args)
+	db, e := store.Open(*dbPath)
+	if e != nil {
+		panic(e)
+	}
+	defer db.Close()
+	rows, e := db.ListFeedback(context.Background())
+	if e != nil {
+		panic(e)
+	}
+	var w *os.File
+	if *out != "" {
+		w, e = os.OpenFile(*out, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+		if e != nil {
+			panic(e)
+		}
+		defer w.Close()
+	} else {
+		w = os.Stdout
+	}
+	enc := json.NewEncoder(w)
+	for _, r := range rows {
+		if e = enc.Encode(r); e != nil {
+			panic(e)
+		}
+	}
 }
 
 func reportCommand(args []string) {
