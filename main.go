@@ -14,6 +14,7 @@ import (
 
 	"github.com/adikezh/siem-triage-agent/internal/auth"
 	"github.com/adikezh/siem-triage-agent/internal/config"
+	"github.com/adikezh/siem-triage-agent/internal/metrics"
 	"github.com/adikezh/siem-triage-agent/internal/report"
 	"github.com/adikezh/siem-triage-agent/internal/rules"
 	"github.com/adikezh/siem-triage-agent/internal/store"
@@ -270,6 +271,7 @@ func serve(args []string) {
 		w.Header().Set("content-type", "application/json")
 		fmt.Fprint(w, `{"status":"ok"}`)
 	})
+	http.Handle("/metrics", metrics.Handler(db))
 	http.Handle("/", web.Handler(db))
 	incidentsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
