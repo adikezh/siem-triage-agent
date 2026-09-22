@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -363,6 +364,7 @@ func serve(args []string) {
 	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
 	configPath := fs.String("config", "", "YAML configuration path")
 	apiKeyEnv := fs.String("api-key-env", "", "environment variable containing API key")
+	webhookSecretEnv := fs.String("webhook-secret-env", "", "environment variable containing Telegram/Slack webhook secret")
 	tlsCert := fs.String("tls-cert", "", "TLS certificate path")
 	tlsKey := fs.String("tls-key", "", "TLS private key path")
 	fs.Parse(args)
@@ -388,6 +390,13 @@ func serve(args []string) {
 	authHash := ""
 	if apiKey != "" {
 		authHash = auth.HashKey(apiKey)
+	}
+	webhookSecret := ""
+	if *webhookSecretEnv != "" {
+		webhookSecret = strings.TrimSpace(os.Getenv(*webhookSecretEnv))
+		if webhookSecret == "" {
+			panic("webhook secret environment variable is empty")
+		}
 	}
 	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("content-type", "application/json")
@@ -514,6 +523,8 @@ func serve(args []string) {
 		_, _ = w.Write([]byte(`{"status":"saved"}`))
 	})
 	http.Handle("/api/incidents/feedback", auth.MiddlewareHash(feedbackHandler, authHash))
+	http.Handle("/api/integrations/telegram/callback", callbackAuth(webhookHandler(db, "telegram"), webhookSecret))
+	http.Handle("/api/integrations/slack/callback", callbackAuth(webhookHandler(db, "slack"), webhookSecret))
 	fmt.Println("listening on", *addr)
 	if (*tlsCert == "") != (*tlsKey == "") {
 		panic("tls-cert and tls-key must be provided together")
@@ -527,6 +538,90 @@ func serve(args []string) {
 	if e != nil {
 		panic(e)
 	}
+}
+
+func callbackAuth(next http.Handler, secret string) http.Handler {
+	if secret == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		provided := r.Header.Get("X-Triage-Webhook-Secret")
+		if provided == "" {
+			provided = r.Header.Get("X-Telegram-Bot-Api-Secret-Token")
+		}
+		if subtle.ConstantTimeCompare([]byte(provided), []byte(secret)) != 1 {
+			http.Error(w, "invalid webhook secret", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func webhookHandler(db *store.Store, channel string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var payload struct {
+			CallbackQuery struct {
+				Data string `json:"data"`
+				From struct {
+					ID       int64  `json:"id"`
+					Username string `json:"username"`
+				} `json:"from"`
+			} `json:"callback_query"`
+			Actions []struct {
+				ActionID string `json:"action_id"`
+				Value    string `json:"value"`
+			} `json:"actions"`
+			User struct {
+				ID       string `json:"id"`
+				Name     string `json:"name"`
+				Username string `json:"username"`
+			} `json:"user"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
+			return
+		}
+		action, incidentID, actor := "", "", channel
+		if payload.CallbackQuery.Data != "" {
+			parts := strings.SplitN(payload.CallbackQuery.Data, "|", 2)
+			if len(parts) == 2 {
+				action, incidentID = parts[0], parts[1]
+			}
+			if payload.CallbackQuery.From.Username != "" {
+				actor = payload.CallbackQuery.From.Username
+			} else {
+				actor = strconv.FormatInt(payload.CallbackQuery.From.ID, 10)
+			}
+		} else if len(payload.Actions) > 0 {
+			action, incidentID = payload.Actions[0].ActionID, payload.Actions[0].Value
+			if payload.User.Username != "" {
+				actor = payload.User.Username
+			} else if payload.User.Name != "" {
+				actor = payload.User.Name
+			} else {
+				actor = payload.User.ID
+			}
+		}
+		if action == "open" {
+			w.Header().Set("content-type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok", "incident_id": incidentID})
+			return
+		}
+		if action != "tp" && action != "fp" && action != "ack" || incidentID == "" {
+			http.Error(w, "callback must contain action and incident id", http.StatusBadRequest)
+			return
+		}
+		if err := db.AddFeedback(r.Context(), incidentID, action, "", actor); err != nil {
+			http.Error(w, "could not save feedback", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "saved", "channel": channel, "incident_id": incidentID, "verdict": action})
+	})
 }
 func usage() {
 	fmt.Println("triage run --file alerts.ndjson [--out report.json]\ntriage rules test --file alerts.ndjson --config config.yaml\ntriage feedback export --db data/triage.db --out feedback.jsonl\ntriage eval --dataset feedback.jsonl\ntriage demo [--listen :8080 --db data/triage.db]\ntriage serve [--listen :8080]\ntriage report --db data/triage.db --period 7d --out weekly.md\ntriage version")
