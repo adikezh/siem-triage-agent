@@ -27,6 +27,8 @@ import (
 	"github.com/adikezh/siem-triage-agent/internal/httpapi"
 	"github.com/adikezh/siem-triage-agent/internal/ingest"
 	"github.com/adikezh/siem-triage-agent/internal/metrics"
+	"github.com/adikezh/siem-triage-agent/internal/notify"
+	"github.com/adikezh/siem-triage-agent/internal/pipeline"
 	"github.com/adikezh/siem-triage-agent/internal/report"
 	"github.com/adikezh/siem-triage-agent/internal/rules"
 	"github.com/adikezh/siem-triage-agent/internal/store"
@@ -463,6 +465,7 @@ func serve(args []string) {
 	sourceUser := fs.String("source-user", "", "source basic-auth username")
 	sourcePasswordEnv := fs.String("source-password-env", "", "environment variable containing source password")
 	sourceInterval := fs.Duration("source-interval", 15*time.Second, "source polling interval")
+	webhookURL := fs.String("webhook-url", "", "optional notification webhook URL")
 	tlsCert := fs.String("tls-cert", "", "TLS certificate path")
 	tlsKey := fs.String("tls-key", "", "TLS private key path")
 	fs.Parse(args)
@@ -714,7 +717,11 @@ func serve(args []string) {
 		if *sourcePasswordEnv != "" {
 			password = os.Getenv(*sourcePasswordEnv)
 		}
-		go pollWazuh(context.Background(), db, ingest.WazuhClient{BaseURL: *sourceURL, Index: *sourceIndex, Username: *sourceUser, Password: password}, *sourceInterval)
+		var sender pipeline.Sender
+		if *webhookURL != "" {
+			sender = notify.Webhook{URL: *webhookURL, Secret: webhookSecret}
+		}
+		go pollWazuh(context.Background(), db, ingest.WazuhClient{BaseURL: *sourceURL, Index: *sourceIndex, Username: *sourceUser, Password: password}, *sourceInterval, sender)
 	}
 	fmt.Println("listening on", *addr)
 	if (*tlsCert == "") != (*tlsKey == "") {
@@ -731,7 +738,7 @@ func serve(args []string) {
 	}
 }
 
-func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, interval time.Duration) {
+func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, interval time.Duration, sender pipeline.Sender) {
 	const sourceName = "wazuh-live"
 	saved, err := db.LoadCursor(ctx, sourceName)
 	if err != nil {
@@ -764,8 +771,15 @@ func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, 
 						fmt.Fprintln(os.Stderr, "save incident:", err)
 						return
 					}
+					if sender != nil {
+						payload, _ := json.Marshal(incident)
+						_ = db.Enqueue(ctx, id, "webhook", payload)
+					}
 				}
 			}
+		}
+		if sender != nil {
+			_, _ = (pipeline.Dispatcher{Store: db, Sender: sender, BaseDelay: time.Second, MaxAttempts: 10}).Dispatch(ctx, 100)
 		}
 		b, _ := json.Marshal(next.Sort)
 		if err := db.SaveCursor(ctx, sourceName, store.Cursor{Timestamp: next.Timestamp, SortJSON: b}); err != nil {
