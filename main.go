@@ -39,6 +39,7 @@ import (
 	"github.com/adikezh/siem-triage-agent/internal/triage/llm"
 	"github.com/adikezh/siem-triage-agent/internal/triage/scoring"
 	"github.com/adikezh/siem-triage-agent/internal/web"
+	"gopkg.in/yaml.v3"
 )
 
 type Alert struct {
@@ -116,6 +117,12 @@ func main() {
 		}
 	case "eval":
 		evalCommand(os.Args[2:])
+	case "assets":
+		if len(os.Args) > 2 && os.Args[2] == "import" {
+			assetsImport(os.Args[3:])
+		} else {
+			usage()
+		}
 	default:
 		usage()
 	}
@@ -166,6 +173,44 @@ func rulesTest(args []string) {
 	}
 	b, _ := json.MarshalIndent(map[string]int{"input": input, "suppressed": suppressed, "accepted": input - suppressed}, "", "  ")
 	fmt.Println(string(b))
+}
+
+func assetsImport(args []string) {
+	fs := flag.NewFlagSet("assets import", flag.ExitOnError)
+	file := fs.String("file", "", "CSV or YAML asset inventory")
+	out := fs.String("out", "", "output YAML path (optional)")
+	fs.Parse(args)
+	if *file == "" {
+		fmt.Fprintln(os.Stderr, "--file is required")
+		os.Exit(2)
+	}
+	var assets map[string]enrich.Asset
+	var err error
+	if strings.HasSuffix(strings.ToLower(*file), ".csv") {
+		assets, err = enrich.LoadCSV(*file)
+	} else {
+		assets, err = enrich.Load(*file)
+	}
+	if err != nil {
+		panic(err)
+	}
+	list := make([]enrich.Asset, 0, len(assets))
+	for _, asset := range assets {
+		list = append(list, asset)
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].IP < list[j].IP })
+	payload, err := yaml.Marshal(enrich.File{Assets: list})
+	if err != nil {
+		panic(err)
+	}
+	if *out == "" {
+		fmt.Print(string(payload))
+		return
+	}
+	if err := os.WriteFile(*out, payload, 0600); err != nil {
+		panic(err)
+	}
+	fmt.Printf("imported %d assets to %s\n", len(list), *out)
 }
 func run(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
@@ -1092,7 +1137,7 @@ func webhookHandler(db *store.Store, channel string) http.Handler {
 	})
 }
 func usage() {
-	fmt.Println("triage run --file alerts.ndjson [--out report.json]\ntriage rules test --file alerts.ndjson --config config.yaml\ntriage feedback export --db data/triage.db --out feedback.jsonl\ntriage eval --dataset feedback.jsonl\ntriage apikey create|list|revoke|rotate --db data/triage.db\ntriage demo [--listen :8080 --db data/triage.db]\ntriage serve [--listen :8080]\ntriage report --db data/triage.db --period 7d --out weekly.md\ntriage version")
+	fmt.Println("triage run --file alerts.ndjson [--out report.json]\ntriage rules test --file alerts.ndjson --config config.yaml\ntriage feedback export --db data/triage.db --out feedback.jsonl\ntriage eval --dataset feedback.jsonl\ntriage apikey create|list|revoke|rotate --db data/triage.db\ntriage assets import --file inventory.csv --out configs/assets.yaml\ntriage demo [--listen :8080 --db data/triage.db]\ntriage serve [--listen :8080]\ntriage report --db data/triage.db --period 7d --out weekly.md\ntriage version")
 }
 
 func apiKeyCreate(args []string) {
