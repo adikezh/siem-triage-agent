@@ -123,6 +123,12 @@ func main() {
 		} else {
 			usage()
 		}
+	case "migrate":
+		if len(os.Args) > 2 && os.Args[2] == "up" {
+			migrateUp(os.Args[3:])
+		} else {
+			usage()
+		}
 	default:
 		usage()
 	}
@@ -211,6 +217,23 @@ func assetsImport(args []string) {
 		panic(err)
 	}
 	fmt.Printf("imported %d assets to %s\n", len(list), *out)
+}
+
+func migrateUp(args []string) {
+	fs := flag.NewFlagSet("migrate up", flag.ExitOnError)
+	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
+	fs.Parse(args)
+	if err := os.MkdirAll(filepath.Dir(*dbPath), 0700); err != nil {
+		panic(err)
+	}
+	db, err := store.Open(*dbPath)
+	if err != nil {
+		panic(err)
+	}
+	if err := db.Close(); err != nil {
+		panic(err)
+	}
+	fmt.Printf("database schema is ready: %s\n", *dbPath)
 }
 func run(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
@@ -1137,7 +1160,7 @@ func webhookHandler(db *store.Store, channel string) http.Handler {
 	})
 }
 func usage() {
-	fmt.Println("triage run --file alerts.ndjson [--out report.json]\ntriage rules test --file alerts.ndjson --config config.yaml\ntriage feedback export --db data/triage.db --out feedback.jsonl\ntriage eval --dataset feedback.jsonl\ntriage apikey create|list|revoke|rotate --db data/triage.db\ntriage assets import --file inventory.csv --out configs/assets.yaml\ntriage demo [--listen :8080 --db data/triage.db]\ntriage serve [--listen :8080]\ntriage report --db data/triage.db --period 7d --out weekly.md\ntriage version")
+	fmt.Println("triage run --file alerts.ndjson [--out report.json]\ntriage rules test --file alerts.ndjson --config config.yaml\ntriage feedback export --db data/triage.db --out feedback.jsonl\ntriage eval --dataset feedback.jsonl\ntriage apikey create|list|revoke|rotate --db data/triage.db\ntriage assets import --file inventory.csv --out configs/assets.yaml\ntriage migrate up --db data/triage.db\ntriage demo [--listen :8080 --db data/triage.db]\ntriage serve [--listen :8080]\ntriage report --db data/triage.db --period 7d --out weekly.md\ntriage version")
 }
 
 func apiKeyCreate(args []string) {
