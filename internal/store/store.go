@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -310,7 +311,30 @@ func nullableText(v string) any {
 }
 
 func (s *Store) ListIncidents(ctx context.Context) ([]Record, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,fingerprint,first_seen,last_seen,alert_count,score,severity,payload FROM incidents ORDER BY last_seen DESC`)
+	return s.ListIncidentsFiltered(ctx, "", "", 0)
+}
+
+func (s *Store) ListIncidentsFiltered(ctx context.Context, severity, since string, limit int) ([]Record, error) {
+	query := `SELECT id,fingerprint,first_seen,last_seen,alert_count,score,severity,payload FROM incidents`
+	where := []string{}
+	args := []any{}
+	if severity != "" {
+		where = append(where, "severity=?")
+		args = append(args, severity)
+	}
+	if since != "" {
+		where = append(where, "last_seen>=?")
+		args = append(args, since)
+	}
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY last_seen DESC"
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

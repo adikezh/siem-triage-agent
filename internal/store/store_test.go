@@ -128,3 +128,23 @@ func TestAPIKeyHashAndVerify(t *testing.T) {
 		t.Fatalf("wrong key ok=%v err=%v", ok, err)
 	}
 }
+
+func TestIncidentFilters(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "triage.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	now := time.Now().UTC()
+	old := now.Add(-time.Hour)
+	if err = s.SaveIncident(context.Background(), map[string]string{}, "low-1", "a", "low", 10, 1, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SaveIncident(context.Background(), map[string]string{}, "high-1", "b", "high", 80, 1, now, now); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.ListIncidentsFiltered(context.Background(), "high", now.Add(-time.Minute).Format(time.RFC3339Nano), 1)
+	if err != nil || len(rows) != 1 || rows[0].ID != "high-1" {
+		t.Fatalf("rows=%#v err=%v", rows, err)
+	}
+}

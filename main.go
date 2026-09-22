@@ -499,7 +499,29 @@ func serve(args []string) {
 			http.Error(w, "method not allowed", 405)
 			return
 		}
-		records, e := db.ListIncidents(r.Context())
+		q := r.URL.Query()
+		severity := q.Get("severity")
+		if severity != "" && severity != "low" && severity != "medium" && severity != "high" && severity != "critical" {
+			http.Error(w, "invalid severity", http.StatusBadRequest)
+			return
+		}
+		limit := 0
+		if raw := q.Get("limit"); raw != "" {
+			parsed, parseErr := strconv.Atoi(raw)
+			if parseErr != nil || parsed < 1 || parsed > 1000 {
+				http.Error(w, "limit must be 1..1000", http.StatusBadRequest)
+				return
+			}
+			limit = parsed
+		}
+		since := q.Get("since")
+		if since != "" {
+			if _, parseErr := time.Parse(time.RFC3339, since); parseErr != nil {
+				http.Error(w, "since must be RFC3339", http.StatusBadRequest)
+				return
+			}
+		}
+		records, e := db.ListIncidentsFiltered(r.Context(), severity, since, limit)
 		if e != nil {
 			http.Error(w, "storage error", 500)
 			return
