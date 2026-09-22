@@ -1,0 +1,2 @@
+SIEM Triage Agent is installed.
+Use `kubectl port-forward svc/{{ include "siem-triage-agent.fullname" . }} 8080:{{ .Values.service.port }}` to access the API.

@@ -7,6 +7,7 @@ Quick start:
     go run . run --file testdata/example.ndjson --db data/triage.db
     go test ./...
     docker compose up --build
+    helm upgrade --install triage deploy/helm/siem-triage-agent
     go run . report --db data/triage.db --period 7d --format md --out weekly.md
     go run . report --db data/triage.db --period 7d --format pdf --out weekly.pdf
     go run . report --db data/triage.db --period 7d --format docx --out weekly.docx

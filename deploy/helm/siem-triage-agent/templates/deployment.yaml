@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "siem-triage-agent.fullname" . }}
+  labels: {{- include "siem-triage-agent.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "siem-triage-agent.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels: {{- include "siem-triage-agent.labels" . | nindent 8 }}
+    spec:
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: triage
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["serve", "--listen", ":8080", "--db", "/app/data/triage.db"]
+          ports: [{ name: http, containerPort: 8080 }]
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: ["ALL"] } }
+          env:
+            - name: TRIAGE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (include "siem-triage-agent.fullname" .) .Values.apiKeySecret.name }}
+                  key: {{ .Values.apiKeySecret.key }}
+                  optional: true
+          readinessProbe: { httpGet: { path: /health, port: http } }
+          livenessProbe: { httpGet: { path: /health, port: http } }
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts: [{ name: data, mountPath: /app/data }]
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim: { claimName: {{ include "siem-triage-agent.fullname" . }} }
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

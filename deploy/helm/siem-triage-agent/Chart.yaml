@@ -1,0 +1,6 @@
+apiVersion: v2
+name: siem-triage-agent
+description: SIEM alert triage service
+type: application
+version: 0.1.0
+appVersion: "dev"

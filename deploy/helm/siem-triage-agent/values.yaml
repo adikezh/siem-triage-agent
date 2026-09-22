@@ -1,0 +1,15 @@
+image:
+  repository: ghcr.io/adikezh/siem-triage-agent
+  tag: latest
+  pullPolicy: IfNotPresent
+service:
+  type: ClusterIP
+  port: 8080
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""
+apiKeySecret:
+  name: ""
+  key: TRIAGE_API_KEY
+resources: {}
