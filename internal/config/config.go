@@ -20,6 +20,14 @@ type Config struct {
 	Enrichment struct {
 		AssetsFile string `yaml:"assets_file"`
 		IOCFile    string `yaml:"ioc_file"`
+		AbuseIPDB  struct {
+			BaseURL   string `yaml:"base_url"`
+			APIKeyEnv string `yaml:"api_key_env"`
+		} `yaml:"abuseipdb"`
+		VirusTotal struct {
+			BaseURL   string `yaml:"base_url"`
+			APIKeyEnv string `yaml:"api_key_env"`
+		} `yaml:"virustotal"`
 	} `yaml:"enrichment"`
 	Triage struct {
 		LLMThreshold int    `yaml:"llm_threshold"`

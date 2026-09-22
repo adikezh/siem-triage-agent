@@ -190,6 +190,14 @@ func run(args []string) {
 	if e != nil {
 		panic(e)
 	}
+	var threat enrich.ThreatChain
+	if key := os.Getenv(cfg.Enrichment.AbuseIPDB.APIKeyEnv); key != "" {
+		threat = append(threat, enrich.AbuseIPDB{BaseURL: cfg.Enrichment.AbuseIPDB.BaseURL, APIKey: key})
+	}
+	if key := os.Getenv(cfg.Enrichment.VirusTotal.APIKeyEnv); key != "" {
+		threat = append(threat, enrich.VirusTotal{BaseURL: cfg.Enrichment.VirusTotal.BaseURL, APIKey: key})
+	}
+	threatCache := enrich.NewThreatCache(24 * time.Hour)
 	var suppressions []rules.Suppression
 	if cfg.Correlation.SuppressionsFile != "" {
 		suppressions, err = rules.Load(cfg.Correlation.SuppressionsFile)
@@ -241,6 +249,14 @@ func run(args []string) {
 		}
 		if iocs.MaliciousIP(a.SrcIP) {
 			a.Malicious = true
+		}
+		if len(threat) > 0 && a.SrcIP != "" {
+			lookupCtx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+			result, lookupErr := threatCache.Lookup(lookupCtx, a.SrcIP, threat)
+			cancel()
+			if lookupErr == nil && result.Malicious {
+				a.Malicious = true
+			}
 		}
 		alerts = append(alerts, a)
 	}

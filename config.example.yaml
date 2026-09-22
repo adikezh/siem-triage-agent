@@ -12,3 +12,9 @@ triage:
 enrichment:
   assets_file: configs/assets.example.yaml
   ioc_file: configs/ioc.example.yaml
+  abuseipdb:
+    base_url: https://api.abuseipdb.com/api/v2
+    api_key_env: ABUSEIPDB_API_KEY
+  virustotal:
+    base_url: https://www.virustotal.com/api/v3
+    api_key_env: VIRUSTOTAL_API_KEY
