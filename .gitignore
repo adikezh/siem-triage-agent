@@ -1,0 +1,4 @@
+/data/
+/triage
+*.db
+*.log
