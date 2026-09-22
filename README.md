@@ -13,4 +13,4 @@ LLM is opt-in. For an OpenAI-compatible endpoint set `--llm-url` and `--llm-mode
 
 The current release intentionally has no outbound network calls and no LLM fallback. Production integrations, persistence, auth, UI and reports remain tracked in TODO.md and are not claimed complete.
 
-The local API exposes `GET /health`, `GET /api/incidents`, and `POST /api/incidents/feedback`. Set `--api-key-env TRIAGE_API_KEY` to protect the incident and feedback endpoints with `Authorization: Bearer ...`; health remains public for probes.
+The server also serves a small HTML dashboard at `/`. API endpoints are `GET /health`, `GET /api/incidents`, and `POST /api/incidents/feedback`. Set `--api-key-env TRIAGE_API_KEY` to protect the incident and feedback endpoints with `Authorization: Bearer ...`; health remains public for probes.

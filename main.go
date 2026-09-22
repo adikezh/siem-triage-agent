@@ -20,6 +20,7 @@ import (
 	triageengine "github.com/adikezh/siem-triage-agent/internal/triage"
 	"github.com/adikezh/siem-triage-agent/internal/triage/llm"
 	"github.com/adikezh/siem-triage-agent/internal/triage/scoring"
+	"github.com/adikezh/siem-triage-agent/internal/web"
 )
 
 type Alert struct {
@@ -269,6 +270,7 @@ func serve(args []string) {
 		w.Header().Set("content-type", "application/json")
 		fmt.Fprint(w, `{"status":"ok"}`)
 	})
+	http.Handle("/", web.Handler(db))
 	incidentsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", 405)
