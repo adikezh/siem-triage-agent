@@ -25,6 +25,7 @@ import (
 	"github.com/adikezh/siem-triage-agent/internal/enrich"
 	"github.com/adikezh/siem-triage-agent/internal/eval"
 	"github.com/adikezh/siem-triage-agent/internal/httpapi"
+	"github.com/adikezh/siem-triage-agent/internal/ingest"
 	"github.com/adikezh/siem-triage-agent/internal/metrics"
 	"github.com/adikezh/siem-triage-agent/internal/report"
 	"github.com/adikezh/siem-triage-agent/internal/rules"
@@ -457,6 +458,11 @@ func serve(args []string) {
 	apiKeyEnv := fs.String("api-key-env", "", "environment variable containing API key")
 	webhookSecretEnv := fs.String("webhook-secret-env", "", "environment variable containing Telegram/Slack webhook secret")
 	slackSigningSecretEnv := fs.String("slack-signing-secret-env", "", "environment variable containing Slack signing secret")
+	sourceURL := fs.String("source-url", "", "optional Wazuh/OpenSearch URL for continuous polling")
+	sourceIndex := fs.String("source-index", "wazuh-alerts-*", "source index pattern")
+	sourceUser := fs.String("source-user", "", "source basic-auth username")
+	sourcePasswordEnv := fs.String("source-password-env", "", "environment variable containing source password")
+	sourceInterval := fs.Duration("source-interval", 15*time.Second, "source polling interval")
 	tlsCert := fs.String("tls-cert", "", "TLS certificate path")
 	tlsKey := fs.String("tls-key", "", "TLS private key path")
 	fs.Parse(args)
@@ -700,6 +706,16 @@ func serve(args []string) {
 		slackCallback = slackSignatureAuth(slackCallback, slackSigningSecret)
 	}
 	http.Handle("/api/integrations/slack/callback", slackCallback)
+	if *sourceURL != "" {
+		if *sourceInterval <= 0 {
+			panic("source-interval must be positive")
+		}
+		password := ""
+		if *sourcePasswordEnv != "" {
+			password = os.Getenv(*sourcePasswordEnv)
+		}
+		go pollWazuh(context.Background(), db, ingest.WazuhClient{BaseURL: *sourceURL, Index: *sourceIndex, Username: *sourceUser, Password: password}, *sourceInterval)
+	}
 	fmt.Println("listening on", *addr)
 	if (*tlsCert == "") != (*tlsKey == "") {
 		panic("tls-cert and tls-key must be provided together")
@@ -712,6 +728,49 @@ func serve(args []string) {
 	}
 	if e != nil {
 		panic(e)
+	}
+}
+
+func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, interval time.Duration) {
+	const sourceName = "wazuh-live"
+	saved, err := db.LoadCursor(ctx, sourceName)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "source cursor:", err)
+		return
+	}
+	cur := ingest.Cursor{Timestamp: saved.Timestamp}
+	if len(saved.SortJSON) > 0 {
+		_ = json.Unmarshal(saved.SortJSON, &cur.Sort)
+	}
+	poll := func() {
+		hits, next, err := source.Search(ctx, cur)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "source poll:", err)
+			return
+		}
+		for _, hit := range hits {
+			if err := db.SaveAlert(ctx, hit.ID, "wazuh", hit.Timestamp, ingest.NormalizeHit(hit)); err != nil {
+				fmt.Fprintln(os.Stderr, "save alert:", err)
+				return
+			}
+		}
+		b, _ := json.Marshal(next.Sort)
+		if err := db.SaveCursor(ctx, sourceName, store.Cursor{Timestamp: next.Timestamp, SortJSON: b}); err != nil {
+			fmt.Fprintln(os.Stderr, "save cursor:", err)
+			return
+		}
+		cur = next
+	}
+	poll()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			poll()
+		}
 	}
 }
 
