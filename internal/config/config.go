@@ -10,7 +10,8 @@ import (
 
 type Config struct {
 	Storage struct {
-		Path string `yaml:"path"`
+		Path      string    `yaml:"path"`
+		Retention Retention `yaml:"retention"`
 	} `yaml:"storage"`
 	Correlation struct {
 		Window           time.Duration `yaml:"window"`
@@ -37,6 +38,11 @@ type Config struct {
 	} `yaml:"triage"`
 }
 
+type Retention struct {
+	Alerts   time.Duration `yaml:"alerts"`
+	LLMCalls time.Duration `yaml:"llm_calls"`
+}
+
 type Provider struct {
 	Name      string `yaml:"name"`
 	Type      string `yaml:"type"`
@@ -48,6 +54,8 @@ type Provider struct {
 func Defaults() Config {
 	var c Config
 	c.Storage.Path = "data/triage.db"
+	c.Storage.Retention.Alerts = 30 * 24 * time.Hour
+	c.Storage.Retention.LLMCalls = 90 * 24 * time.Hour
 	c.Correlation.Window = 15 * time.Minute
 	c.Correlation.MaxIncidentAge = 6 * time.Hour
 	c.Triage.LLMThreshold = 40
@@ -68,6 +76,12 @@ func Load(path string) (Config, error) {
 	}
 	if c.Storage.Path == "" {
 		c.Storage.Path = "data/triage.db"
+	}
+	if c.Storage.Retention.Alerts <= 0 {
+		c.Storage.Retention.Alerts = 30 * 24 * time.Hour
+	}
+	if c.Storage.Retention.LLMCalls <= 0 {
+		c.Storage.Retention.LLMCalls = 90 * 24 * time.Hour
 	}
 	if c.Correlation.Window <= 0 {
 		c.Correlation.Window = 15 * time.Minute

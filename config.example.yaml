@@ -2,6 +2,9 @@ server:
   listen: ":8080"
 storage:
   path: data/triage.db
+  retention:
+    alerts: 720h
+    llm_calls: 2160h
 correlation:
   window: 15m
   max_incident_age: 6h

@@ -154,3 +154,26 @@ func TestIncidentFilters(t *testing.T) {
 		t.Fatalf("rows=%#v err=%v", rows, err)
 	}
 }
+
+func TestPruneRetention(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "triage.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	old := time.Now().UTC().Add(-48 * time.Hour)
+	fresh := time.Now().UTC()
+	if err = s.SaveAlert(context.Background(), "old", "file", old, map[string]string{"x": "old"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.SaveAlert(context.Background(), "new", "file", fresh, map[string]string{"x": "new"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Prune(context.Background(), time.Now().UTC().Add(-24*time.Hour), time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err = s.db.QueryRow(`SELECT COUNT(*) FROM alerts`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("alerts=%d err=%v", count, err)
+	}
+}

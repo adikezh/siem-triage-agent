@@ -254,6 +254,20 @@ func (s *Store) SaveLLMTrace(ctx context.Context, t LLMTrace) error {
 	return err
 }
 
+func (s *Store) Prune(ctx context.Context, alertBefore, llmBefore time.Time) error {
+	if !alertBefore.IsZero() {
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM alerts WHERE timestamp<?`, alertBefore.UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+	}
+	if !llmBefore.IsZero() {
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM llm_calls WHERE created_at<?`, llmBefore.UTC().Format(time.RFC3339Nano)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) SaveIncident(ctx context.Context, incident any, id, fingerprint, severity string, score, count int, first, last time.Time) error {
 	payload, err := json.Marshal(incident)
 	if err != nil {

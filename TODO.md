@@ -1,6 +1,6 @@
 # Delivery backlog
 
-- [~] SQLite WAL store saves normalized alerts and incidents, with source cursor, idempotent outbox and retry/backoff dispatcher; production sender wiring remains.
+- [~] SQLite WAL store saves normalized alerts and incidents, with source cursor, idempotent outbox, retry/backoff dispatcher, and configurable alert/LLM retention pruning; production sender wiring remains.
 - [~] Wazuh/OpenSearch-compatible search-after client, generic Elastic/OpenSearch field-mapped client, and source→process→cursor→outbox worker are present; normalized domain ingest and live source proof remain.
 - [~] YAML config and suppression decisions are wired into offline ingest; DB-backed suppression CRUD/API and created-by/created-at audit fields are present, while applying DB rules in ingest and immutable audit hashing remain.
 - [~] YAML/CSV asset inventory and local IOC enrichment are wired into scoring; opt-in AbuseIPDB/VirusTotal IP clients now have 5–6s timeouts and a SQLite-backed 24h cache, local MaxMind GeoLite2 country lookup is available for LLM context, and the last five same-fingerprint incidents/verdicts are available; broader agent/src history remains.

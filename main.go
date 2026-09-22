@@ -364,6 +364,9 @@ func run(args []string) {
 			panic(err)
 		}
 	}
+	if err := db.Prune(context.Background(), time.Now().UTC().Add(-cfg.Storage.Retention.Alerts), time.Now().UTC().Add(-cfg.Storage.Retention.LLMCalls)); err != nil {
+		panic(err)
+	}
 	b, _ := json.MarshalIndent(inc, "", "  ")
 	if *out != "" {
 		if e = os.WriteFile(*out, b, 0600); e != nil {
