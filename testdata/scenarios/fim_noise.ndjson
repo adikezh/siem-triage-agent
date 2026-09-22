@@ -1,0 +1,2 @@
+{"id":"fim-1","timestamp":"2026-09-23T08:00:00Z","rule_id":"550","rule_level":3,"agent":{"id":"server-1"},"src_ip":"10.10.1.30","groups":["syscheck"],"rule_description":"File changed in approved path"}
+{"id":"fim-2","timestamp":"2026-09-23T08:03:00Z","rule_id":"550","rule_level":3,"agent":{"id":"server-1"},"src_ip":"10.10.1.30","groups":["syscheck"],"rule_description":"File changed in approved path"}

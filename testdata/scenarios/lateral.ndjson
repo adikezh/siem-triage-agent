@@ -1,0 +1,2 @@
+{"id":"lat-1","timestamp":"2026-09-23T08:00:00Z","rule_id":"100001","rule_level":12,"agent":{"id":"workstation-1"},"src_ip":"10.10.1.20","groups":["lateral_movement"],"rule_description":"Remote service access","high_impact_tactic":true}
+{"id":"lat-2","timestamp":"2026-09-23T08:02:00Z","rule_id":"100002","rule_level":12,"agent":{"id":"workstation-1"},"src_ip":"10.10.1.20","groups":["lateral_movement"],"rule_description":"Remote service access","high_impact_tactic":true}

@@ -1,15 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"github.com/adikezh/siem-triage-agent/internal/ingest"
 	"github.com/adikezh/siem-triage-agent/internal/store"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -96,6 +99,42 @@ func TestPollWazuhPersistsAlertAndIncident(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("poller did not persist incident")
+}
+
+func TestScenarioFixtures(t *testing.T) {
+	cases := []struct {
+		name                string
+		incidents, minScore int
+		severity            string
+	}{{"brute_force", 1, 50, "medium"}, {"lateral", 2, 60, "high"}, {"fim_noise", 1, 15, "low"}}
+	for _, tc := range cases {
+		f, err := os.Open(filepath.Join("testdata", "scenarios", tc.name+".ndjson"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var alerts []Alert
+		scan := bufio.NewScanner(f)
+		for scan.Scan() {
+			var a Alert
+			if err := json.Unmarshal(scan.Bytes(), &a); err != nil {
+				t.Fatal(err)
+			}
+			alerts = append(alerts, a)
+		}
+		_ = f.Close()
+		if err := scan.Err(); err != nil {
+			t.Fatal(err)
+		}
+		inc := groupWithWindow(alerts, 15*time.Minute, 6*time.Hour)
+		if len(inc) != tc.incidents {
+			t.Fatalf("%s incidents=%d want=%d", tc.name, len(inc), tc.incidents)
+		}
+		for _, got := range inc {
+			if got.Score < tc.minScore || got.Severity != tc.severity {
+				t.Fatalf("%s got score=%d severity=%s", tc.name, got.Score, got.Severity)
+			}
+		}
+	}
 }
 
 func BenchmarkGroup100K(b *testing.B) {
