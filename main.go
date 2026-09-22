@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/adikezh/siem-triage-agent/internal/auth"
 	"github.com/adikezh/siem-triage-agent/internal/config"
 	"github.com/adikezh/siem-triage-agent/internal/rules"
 	"github.com/adikezh/siem-triage-agent/internal/store"
@@ -240,6 +241,7 @@ func serve(args []string) {
 	addr := fs.String("listen", ":8080", "address")
 	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
 	configPath := fs.String("config", "", "YAML configuration path")
+	apiKeyEnv := fs.String("api-key-env", "", "environment variable containing API key")
 	fs.Parse(args)
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -253,11 +255,18 @@ func serve(args []string) {
 		panic(err)
 	}
 	defer db.Close()
+	apiKey := ""
+	if *apiKeyEnv != "" {
+		apiKey, err = auth.RequireKey(os.Getenv(*apiKeyEnv))
+		if err != nil {
+			panic(err)
+		}
+	}
 	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("content-type", "application/json")
 		fmt.Fprint(w, `{"status":"ok"}`)
 	})
-	http.HandleFunc("/api/incidents", func(w http.ResponseWriter, r *http.Request) {
+	incidentsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", 405)
 			return
@@ -270,7 +279,8 @@ func serve(args []string) {
 		w.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(w).Encode(records)
 	})
-	http.HandleFunc("/api/incidents/feedback", func(w http.ResponseWriter, r *http.Request) {
+	http.Handle("/api/incidents", auth.Middleware(incidentsHandler, apiKey))
+	feedbackHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -296,6 +306,7 @@ func serve(args []string) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"status":"saved"}`))
 	})
+	http.Handle("/api/incidents/feedback", auth.Middleware(feedbackHandler, apiKey))
 	fmt.Println("listening on", *addr)
 	if e := http.ListenAndServe(*addr, nil); e != nil {
 		panic(e)

@@ -7,5 +7,5 @@
 - [x] Deterministic scoring formula and table tests (history-frequency input remains to be wired from feedback store).
 - [~] PII redaction, prompt builder, OpenAI-compatible provider, strict output/action validation, provider fallback, budget guard, triage merge engine, versioned prompts, CLI opt-in runtime path and LLM trace schema are present; persistent budget/config wiring and non-OpenAI providers remain.
 - [~] Generic HMAC webhook sender and Wazuh field normalizer are present and tested; Telegram/Slack/IRIS/TheHive/Jira adapters remain.
-- [ ] Authenticated REST API, RBAC, UI and reports (demo read/feedback API exists; authentication is still pending).
+- [~] Optional API-key Bearer authentication protects incident/feedback endpoints; RBAC, key hashing/rotation, UI and reports remain.
 - [ ] Hosted CI, govulncheck, SBOM, load test and real SOC demo evidence.
