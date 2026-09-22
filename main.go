@@ -667,7 +667,7 @@ func serve(args []string) {
 	})
 	http.Handle("/metrics", metrics.Handler(db))
 	http.Handle("/openapi.json", httpapi.OpenAPIHandler())
-	http.Handle("/", web.Handler(db))
+	http.Handle("/", web.HandlerWithAssets(db, assets))
 	incidentsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", 405)

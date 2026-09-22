@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"github.com/adikezh/siem-triage-agent/internal/enrich"
 	"github.com/adikezh/siem-triage-agent/internal/store"
 	"net/http"
 	"net/http/httptest"
@@ -60,5 +61,25 @@ func TestIncidentDetailAndFeedback(t *testing.T) {
 	rows, err := s.ListFeedback(context.Background())
 	if err != nil || len(rows) != 1 || rows[0].Verdict != "fp" {
 		t.Fatalf("feedback=%#v err=%v", rows, err)
+	}
+}
+
+func TestAssetsAndSuppressionsPages(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "pages.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err = s.CreateSuppression(context.Background(), "rule|agent|ip", "drop", "known noise", "", "analyst"); err != nil {
+		t.Fatal(err)
+	}
+	h := HandlerWithAssets(s, map[string]enrich.Asset{"10.0.0.10": {IP: "10.0.0.10", Hostname: "db-1", Criticality: 5}})
+	for _, tc := range []struct{ path, want string }{{"/suppressions", "known noise"}, {"/assets", "db-1"}} {
+		r := httptest.NewRequest("GET", tc.path, nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), tc.want) {
+			t.Fatalf("%s: %d %s", tc.path, w.Code, w.Body.String())
+		}
 	}
 }
