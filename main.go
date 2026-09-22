@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -78,6 +80,12 @@ func main() {
 	case "feedback":
 		if len(os.Args) > 2 && os.Args[2] == "export" {
 			feedbackExport(os.Args[3:])
+		} else {
+			usage()
+		}
+	case "apikey":
+		if len(os.Args) > 2 && os.Args[2] == "create" {
+			apiKeyCreate(os.Args[3:])
 		} else {
 			usage()
 		}
@@ -441,6 +449,22 @@ func serve(args []string) {
 	if apiKey != "" {
 		authHash = auth.HashKey(apiKey)
 	}
+	protect := func(next http.Handler) http.Handler {
+		if authHash != "" {
+			return auth.MiddlewareHash(next, authHash)
+		}
+		hasKeys, hasKeysErr := db.HasAPIKeys(context.Background())
+		if hasKeysErr != nil {
+			panic(hasKeysErr)
+		}
+		if !hasKeys {
+			return next
+		}
+		return auth.MiddlewareVerify(next, func(raw string) bool {
+			_, ok, verifyErr := db.VerifyAPIKey(context.Background(), raw)
+			return verifyErr == nil && ok
+		})
+	}
 	webhookSecret := ""
 	if *webhookSecretEnv != "" {
 		webhookSecret = strings.TrimSpace(os.Getenv(*webhookSecretEnv))
@@ -468,8 +492,8 @@ func serve(args []string) {
 		w.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(w).Encode(records)
 	})
-	http.Handle("/api/incidents", auth.MiddlewareHash(incidentsHandler, authHash))
-	http.Handle("/api/incidents/", auth.MiddlewareHash(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	http.Handle("/api/incidents", protect(incidentsHandler))
+	http.Handle("/api/incidents/", protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := strings.TrimPrefix(r.URL.Path, "/api/incidents/")
 		rec, e := db.GetIncident(r.Context(), id)
 		if e != nil {
@@ -478,8 +502,8 @@ func serve(args []string) {
 		}
 		w.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(w).Encode(rec)
-	}), authHash))
-	http.Handle("/api/stats", auth.MiddlewareHash(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	})))
+	http.Handle("/api/stats", protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rows, e := db.ListIncidents(r.Context())
 		if e != nil {
 			http.Error(w, "storage error", 500)
@@ -491,8 +515,8 @@ func serve(args []string) {
 		}
 		w.Header().Set("content-type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"total": len(rows), "by_severity": counts})
-	}), authHash))
-	http.Handle("/api/suppressions", auth.MiddlewareHash(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	})))
+	http.Handle("/api/suppressions", protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			rows, e := db.ListSuppressions(r.Context())
@@ -529,8 +553,8 @@ func serve(args []string) {
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
-	}), authHash))
-	http.Handle("/api/suppressions/", auth.MiddlewareHash(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	})))
+	http.Handle("/api/suppressions/", protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -545,7 +569,7 @@ func serve(args []string) {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
-	}), authHash))
+	})))
 	feedbackHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -572,7 +596,7 @@ func serve(args []string) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"status":"saved"}`))
 	})
-	http.Handle("/api/incidents/feedback", auth.MiddlewareHash(feedbackHandler, authHash))
+	http.Handle("/api/incidents/feedback", protect(feedbackHandler))
 	http.Handle("/api/integrations/telegram/callback", callbackAuth(webhookHandler(db, "telegram"), webhookSecret))
 	http.Handle("/api/integrations/slack/callback", callbackAuth(webhookHandler(db, "slack"), webhookSecret))
 	fmt.Println("listening on", *addr)
@@ -674,7 +698,37 @@ func webhookHandler(db *store.Store, channel string) http.Handler {
 	})
 }
 func usage() {
-	fmt.Println("triage run --file alerts.ndjson [--out report.json]\ntriage rules test --file alerts.ndjson --config config.yaml\ntriage feedback export --db data/triage.db --out feedback.jsonl\ntriage eval --dataset feedback.jsonl\ntriage demo [--listen :8080 --db data/triage.db]\ntriage serve [--listen :8080]\ntriage report --db data/triage.db --period 7d --out weekly.md\ntriage version")
+	fmt.Println("triage run --file alerts.ndjson [--out report.json]\ntriage rules test --file alerts.ndjson --config config.yaml\ntriage feedback export --db data/triage.db --out feedback.jsonl\ntriage eval --dataset feedback.jsonl\ntriage apikey create --db data/triage.db --name soc-bot --role analyst\ntriage demo [--listen :8080 --db data/triage.db]\ntriage serve [--listen :8080]\ntriage report --db data/triage.db --period 7d --out weekly.md\ntriage version")
+}
+
+func apiKeyCreate(args []string) {
+	fs := flag.NewFlagSet("apikey create", flag.ExitOnError)
+	dbPath := fs.String("db", "data/triage.db", "SQLite database path")
+	name := fs.String("name", "", "key name")
+	role := fs.String("role", "viewer", "viewer, analyst or admin")
+	fs.Parse(args)
+	if *name == "" || (*role != "viewer" && *role != "analyst" && *role != "admin") {
+		fmt.Fprintln(os.Stderr, "--name and valid --role are required")
+		os.Exit(2)
+	}
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
+	raw := base64.RawURLEncoding.EncodeToString(b)
+	if err := os.MkdirAll(filepath.Dir(*dbPath), 0700); err != nil {
+		panic(err)
+	}
+	db, err := store.Open(*dbPath)
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+	x, err := db.CreateAPIKey(context.Background(), *name, *role, raw)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("name=%s role=%s key=%s\n", x.Name, x.Role, raw)
 }
 
 func demoCommand(args []string) {

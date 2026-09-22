@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -37,6 +39,11 @@ type HistoryRecord struct {
 	IncidentID, Severity, Verdict, LastSeen string
 }
 
+type APIKeyRecord struct {
+	ID                          int64
+	Name, Role, Hash, CreatedAt string
+}
+
 func (s *Store) SaveAlert(ctx context.Context, id, source string, timestamp time.Time, payload any) error {
 	b, e := json.Marshal(payload)
 	if e != nil {
@@ -69,10 +76,46 @@ CREATE TABLE IF NOT EXISTS feedback (id INTEGER PRIMARY KEY AUTOINCREMENT, incid
 	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS source_cursors (source TEXT PRIMARY KEY, timestamp TEXT NOT NULL, sort_json BLOB NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, incident_id TEXT NOT NULL, channel TEXT NOT NULL, payload BLOB NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TEXT NOT NULL, last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, UNIQUE(incident_id,channel));`)
 	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS threat_cache (ip TEXT PRIMARY KEY, source TEXT NOT NULL, details TEXT NOT NULL, malicious INTEGER NOT NULL, expires_at TEXT NOT NULL, updated_at TEXT NOT NULL)`)
+	_, err = s.db.Exec(`CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, role TEXT NOT NULL CHECK(role IN ('viewer','analyst','admin')), key_hash TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, revoked_at TEXT)`)
 	if err != nil {
 		return fmt.Errorf("migrate sqlite: %w", err)
 	}
 	return nil
+}
+
+func HashAPIKey(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
+
+func (s *Store) CreateAPIKey(ctx context.Context, name, role, raw string) (APIKeyRecord, error) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	r, err := s.db.ExecContext(ctx, `INSERT INTO api_keys(name,role,key_hash,created_at) VALUES(?,?,?,?)`, name, role, HashAPIKey(raw), now)
+	if err != nil {
+		return APIKeyRecord{}, err
+	}
+	id, err := r.LastInsertId()
+	if err != nil {
+		return APIKeyRecord{}, err
+	}
+	return APIKeyRecord{ID: id, Name: name, Role: role, Hash: HashAPIKey(raw), CreatedAt: now}, nil
+}
+
+func (s *Store) HasAPIKeys(ctx context.Context) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_keys WHERE revoked_at IS NULL`).Scan(&n)
+	return n > 0, err
+}
+func (s *Store) VerifyAPIKey(ctx context.Context, raw string) (string, bool, error) {
+	var role string
+	err := s.db.QueryRowContext(ctx, `SELECT role FROM api_keys WHERE key_hash=? AND revoked_at IS NULL`, HashAPIKey(raw)).Scan(&role)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return role, true, nil
 }
 
 func (s *Store) LoadThreatCache(ctx context.Context, ip string, now time.Time) (ThreatCacheRecord, bool, error) {

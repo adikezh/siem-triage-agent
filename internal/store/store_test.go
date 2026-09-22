@@ -110,3 +110,21 @@ func TestIncidentHistory(t *testing.T) {
 		t.Fatalf("history=%#v err=%v", rows, err)
 	}
 }
+
+func TestAPIKeyHashAndVerify(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "triage.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err = s.CreateAPIKey(context.Background(), "bot", "analyst", "secret-value"); err != nil {
+		t.Fatal(err)
+	}
+	role, ok, err := s.VerifyAPIKey(context.Background(), "secret-value")
+	if err != nil || !ok || role != "analyst" {
+		t.Fatalf("role=%s ok=%v err=%v", role, ok, err)
+	}
+	if _, ok, err = s.VerifyAPIKey(context.Background(), "wrong"); err != nil || ok {
+		t.Fatalf("wrong key ok=%v err=%v", ok, err)
+	}
+}

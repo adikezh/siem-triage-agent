@@ -47,6 +47,17 @@ func MiddlewareHash(next http.Handler, expectedHash string) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+func MiddlewareVerify(next http.Handler, verify func(string) bool) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		v := r.Header.Get("authorization")
+		if !strings.HasPrefix(v, "Bearer ") || !verify(strings.TrimSpace(strings.TrimPrefix(v, "Bearer "))) {
+			http.Error(w, "invalid API key", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 func RequireKey(raw string) (string, error) {
 	if strings.TrimSpace(raw) == "" {
 		return "", fmt.Errorf("API key must not be empty")

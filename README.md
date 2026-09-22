@@ -10,6 +10,7 @@ Quick start:
     go run . report --db data/triage.db --period 7d --format md --out weekly.md
     go run . rules test --file testdata/example.ndjson --config config.yaml
     go run . feedback export --db data/triage.db --out feedback.jsonl
+    go run . apikey create --db data/triage.db --name soc-bot --role analyst
 
 LLM is opt-in. For an OpenAI-compatible endpoint set `--llm-url` and `--llm-model`; use `--llm-api-key-env` to name an environment variable for the key. Without `--llm-url`, the run is rule-only and makes no outbound request.
 
@@ -17,4 +18,4 @@ LLM is opt-in. For an OpenAI-compatible endpoint set `--llm-url` and `--llm-mode
 
 If host port 8080 is occupied, use `TRIAGE_PORT=18080 docker compose up --build` (PowerShell: `$env:TRIAGE_PORT=18080; docker compose up --build`).
 
-The server also serves a small HTML dashboard at `/`, OpenAPI JSON at `/openapi.json`, and Prometheus metrics at `/metrics`. API endpoints are `GET /health`, `GET /api/incidents`, `GET /api/incidents/{id}`, `GET /api/stats`, `POST /api/incidents/feedback`, and suppression CRUD under `/api/suppressions`. Telegram and Slack callbacks are accepted at `/api/integrations/telegram/callback` and `/api/integrations/slack/callback`; set `--webhook-secret-env TRIAGE_WEBHOOK_SECRET` to require a shared secret header. Set `--api-key-env TRIAGE_API_KEY` to protect incident endpoints with `Authorization: Bearer ...`; health and metrics remain public for probes. For TLS, pass both `--tls-cert` and `--tls-key`.
+The server also serves a small HTML dashboard at `/`, OpenAPI JSON at `/openapi.json`, and Prometheus metrics at `/metrics`. API endpoints are `GET /health`, `GET /api/incidents`, `GET /api/incidents/{id}`, `GET /api/stats`, `POST /api/incidents/feedback`, and suppression CRUD under `/api/suppressions`. Telegram and Slack callbacks are accepted at `/api/integrations/telegram/callback` and `/api/integrations/slack/callback`; set `--webhook-secret-env TRIAGE_WEBHOOK_SECRET` to require a shared secret header. Set `--api-key-env TRIAGE_API_KEY` for an environment key, or create a database key with `triage apikey create`; once an active DB key exists, protected API routes require `Authorization: Bearer ...`. Health and metrics remain public for probes. For TLS, pass both `--tls-cert` and `--tls-key`.
