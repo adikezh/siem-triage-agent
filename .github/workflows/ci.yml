@@ -5,6 +5,22 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      opensearch:
+        image: opensearchproject/opensearch:2.19.4
+        env:
+          discovery.type: single-node
+          DISABLE_INSTALL_DEMO_CONFIG: 'true'
+          DISABLE_SECURITY_PLUGIN: 'true'
+          OPENSEARCH_JAVA_OPTS: '-Xms512m -Xmx512m'
+        ports:
+          - 19203:9200
+        options: >-
+          --health-cmd "curl --fail --silent http://localhost:9200/_cluster/health"
+          --health-interval 10s --health-timeout 5s --health-retries 30
+    env:
+      TRIAGE_TEST_OPENSEARCH_URL: http://127.0.0.1:19203
+      TRIAGE_RUNTIME_TEST: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -20,7 +36,7 @@ jobs:
           trap 'docker compose down -v' EXIT
           docker compose build
           TRIAGE_PORT=18083 docker compose up -d
-          for attempt in {1..30}; do
+          for _ in {1..30}; do
             if curl --fail --silent http://127.0.0.1:18083/health | grep -q '"status":"ok"'; then
               break
             fi
