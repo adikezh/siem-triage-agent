@@ -56,11 +56,18 @@ func TestOpenSearchEqualTimestampPaginationAndRestart(t *testing.T) {
 			}
 			cursor := Cursor{}
 			var ids []string
+			var pages []string
 			for page := 0; page < 4; page++ {
 				hits, next, err := source.Search(context.Background(), cursor)
 				if err != nil {
 					t.Fatal(err)
 				}
+				diagnostic, _ := json.Marshal(struct {
+					Cursor Cursor
+					Hits   []Hit
+					Next   Cursor
+				}{cursor, hits, next})
+				pages = append(pages, string(diagnostic))
 				for _, hit := range hits {
 					ids = append(ids, hit.ID)
 				}
@@ -75,7 +82,7 @@ func TestOpenSearchEqualTimestampPaginationAndRestart(t *testing.T) {
 				}
 			}
 			if !reflect.DeepEqual(ids, []string{"a", "b", "c", "d", "e"}) {
-				t.Fatalf("real OpenSearch lost or replayed hits: %v", ids)
+				t.Fatalf("real OpenSearch lost or replayed hits: %v\npages: %v", ids, pages)
 			}
 		})
 	}
