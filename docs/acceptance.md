@@ -59,6 +59,20 @@ These tests passed locally with the race detector, a real two-shard OpenSearch
 index, and built-process tests. This is local evidence; hosted CI results must
 be checked for the exact pushed commit.
 
+## Unresolved source regression
+
+[Hosted CI at 532dcad](https://github.com/adikezh/siem-triage-agent/actions/runs/36925483456)
+failed the generic real OpenSearch pagination check: it returned a,c,d,e instead
+of a,b,c,d,e; the Wazuh path passed. Afterward, 350 local repetitions and a full
+race run against real OpenSearch passed without a production-source change.
+The cause is not established and this possible data-loss regression remains
+open. Passing runs do not constitute a fix.
+
+Failure diagnostics now include each request cursor, returned hits and next
+cursor. CI disables Go test-result reuse and repeats the real pagination check
+25 times. This helps distinguish a source failure from a test fixture problem;
+neither explanation is assumed without evidence.
+
 ## Source and delivery constraints
 
 The tie-breaker must be unique within the queried index pattern and mapped as

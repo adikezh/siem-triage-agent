@@ -27,6 +27,11 @@
 
 ## Required implementation backlog (not external-only gates)
 
+- [ ] Resolve the intermittent real OpenSearch pagination regression observed
+  in hosted CI at 532dcad: generic returned a,c,d,e instead of a,b,c,d,e.
+  Exact page diagnostics and uncached repeated CI checks are now included;
+  350 local repetitions passed, so the cause is not yet established. A later
+  passing run does not by itself demonstrate that this possible data loss is fixed.
 - [ ] Finish the specified Alert/Incident model: raw retention, stable IDs,
   incident_alerts links, statuses and timeline; avoid cross-index ID collisions.
 - [ ] Wire the full YAML source configuration, generic continuous source and
