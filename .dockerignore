@@ -1,0 +1,10 @@
+.git
+node_modules
+triage
+triage.exe
+triage.exe~
+data
+*.db
+*.log
+*.cover
+coverage*

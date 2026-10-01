@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i internal/web/input.css -o internal/web/static/app.css --minify",
+    "vendor:htmx": "node -e \"require('node:fs').copyFileSync('node_modules/htmx.org/dist/htmx.min.js','internal/web/static/htmx.min.js'); require('node:fs').copyFileSync('node_modules/htmx.org/LICENSE','internal/web/static/htmx.LICENSE'); require('node:fs').copyFileSync('node_modules/tailwindcss/LICENSE','internal/web/static/tailwind.LICENSE')\""
+  },
+  "devDependencies": { "tailwindcss": "4.3.0", "@tailwindcss/cli": "4.3.0", "htmx.org": "2.0.11" }
+}

@@ -2,3 +2,5 @@
 /triage
 *.db
 *.log
+/node_modules/
+/triage.exe

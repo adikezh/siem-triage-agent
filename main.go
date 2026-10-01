@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -599,6 +600,7 @@ func serve(args []string) {
 	configPath := fs.String("config", "", "YAML configuration path")
 	apiKeyEnv := fs.String("api-key-env", "", "environment variable containing API key")
 	apiKeyRole := fs.String("api-key-role", "admin", "role assigned to the environment API key: viewer, analyst or admin")
+	webPublicURL := fs.String("web-public-url", "", "explicit browser origin behind a reverse proxy, e.g. https://triage.example.com")
 	webhookSecretEnv := fs.String("webhook-secret-env", "", "environment variable containing Telegram/Slack webhook secret")
 	slackSigningSecretEnv := fs.String("slack-signing-secret-env", "", "environment variable containing Slack signing secret")
 	sourceURL := fs.String("source-url", "", "optional Wazuh/OpenSearch URL for continuous polling")
@@ -611,6 +613,14 @@ func serve(args []string) {
 	tlsCert := fs.String("tls-cert", "", "TLS certificate path")
 	tlsKey := fs.String("tls-key", "", "TLS private key path")
 	_ = fs.Parse(args)
+	publicOrigin := ""
+	if *webPublicURL != "" {
+		u, parseErr := url.Parse(*webPublicURL)
+		if parseErr != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") || (u.Scheme != "http" && u.Scheme != "https") {
+			panic("web-public-url must be an http(s) origin without a path, query, or credentials")
+		}
+		publicOrigin = u.Scheme + "://" + u.Host
+	}
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		panic(err)
@@ -660,35 +670,9 @@ func serve(args []string) {
 		}
 		authHash = auth.HashKey(apiKey)
 	}
+	access := auth.StoreAccess(db, authHash, *apiKeyRole)
 	protectRoles := func(next http.Handler, allowed ...string) http.Handler {
-		next = httpapi.RateLimit(next, 120, time.Minute)
-		if authHash != "" {
-			for _, candidate := range allowed {
-				if candidate == *apiKeyRole || *apiKeyRole == "admin" {
-					return auth.MiddlewareHashRole(next, authHash, *apiKeyRole)
-				}
-			}
-			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "forbidden", http.StatusForbidden) })
-		}
-		hasKeys, hasKeysErr := db.HasAPIKeys(context.Background())
-		if hasKeysErr != nil {
-			panic(hasKeysErr)
-		}
-		if !hasKeys {
-			return next
-		}
-		return auth.MiddlewareVerifyRole(next, func(raw string) (string, bool) {
-			role, ok, verifyErr := db.VerifyAPIKey(context.Background(), raw)
-			if verifyErr != nil || !ok {
-				return "", false
-			}
-			for _, candidate := range allowed {
-				if role == candidate || role == "admin" {
-					return role, true
-				}
-			}
-			return role, false
-		})
+		return httpapi.RateLimit(access.Protect(next, allowed...), 120, time.Minute)
 	}
 	protect := func(next http.Handler) http.Handler { return protectRoles(next, "viewer", "analyst", "admin") }
 	webhookSecret := ""
@@ -712,7 +696,7 @@ func serve(args []string) {
 	})
 	http.Handle("/metrics", metrics.Handler(db))
 	http.Handle("/openapi.json", httpapi.OpenAPIHandler())
-	http.Handle("/", web.HandlerWithAssets(db, assets))
+	http.Handle("/", web.NewHandler(db, web.Config{Assets: assets, Access: access, Language: cfg.Triage.Language, PublicOrigin: publicOrigin, SecureCookies: strings.HasPrefix(publicOrigin, "https://")}))
 	incidentsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -826,11 +810,18 @@ func serve(args []string) {
 			w.Header().Set("content-type", "application/json")
 			_ = json.NewEncoder(w).Encode(rows)
 		case http.MethodPost:
-			var input struct {
-				Fingerprint, Action, Reason, ExpiresAt, CreatedBy string
-				Match                                             rules.Match `json:"match"`
+			if !auth.Allowed(auth.Role(r), "analyst", "admin") {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
 			}
-			if e := json.NewDecoder(r.Body).Decode(&input); e != nil {
+			var input struct {
+				Fingerprint string      `json:"fingerprint"`
+				Action      string      `json:"action"`
+				Reason      string      `json:"reason"`
+				ExpiresAt   string      `json:"expires_at"`
+				Match       rules.Match `json:"match"`
+			}
+			if e := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&input); e != nil {
 				http.Error(w, "invalid JSON", http.StatusBadRequest)
 				return
 			}
@@ -843,9 +834,17 @@ func serve(args []string) {
 				http.Error(w, "action must be drop, downgrade or tag", http.StatusBadRequest)
 				return
 			}
+			match := input.Match
+			if input.Fingerprint != "" {
+				match = rules.Match{Fingerprint: input.Fingerprint}
+			}
+			if e := rules.ValidateInput(match, input.Action, input.Reason); e != nil {
+				http.Error(w, e.Error(), http.StatusBadRequest)
+				return
+			}
 			if input.ExpiresAt != "" {
-				if _, e := time.Parse(time.RFC3339, input.ExpiresAt); e != nil {
-					http.Error(w, "expires_at must be RFC3339", http.StatusBadRequest)
+				if expires, e := time.Parse(time.RFC3339, input.ExpiresAt); e != nil || !expires.After(time.Now()) {
+					http.Error(w, "expires_at must be a future RFC3339 timestamp", http.StatusBadRequest)
 					return
 				}
 			}
@@ -858,7 +857,7 @@ func serve(args []string) {
 				}
 				matchJSON = string(encoded)
 			}
-			x, e := db.CreateSuppressionWithMatch(r.Context(), input.Fingerprint, matchJSON, input.Action, input.Reason, input.ExpiresAt, input.CreatedBy)
+			x, e := db.CreateSuppressionWithMatch(r.Context(), input.Fingerprint, matchJSON, input.Action, input.Reason, input.ExpiresAt, auth.Actor(r))
 			if e != nil {
 				http.Error(w, "could not save suppression", http.StatusInternalServerError)
 				return
@@ -869,7 +868,7 @@ func serve(args []string) {
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
-	}), "analyst", "admin"))
+	}), "viewer", "analyst", "admin"))
 	http.Handle("/api/suppressions/", protectRoles(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -880,7 +879,7 @@ func serve(args []string) {
 			http.Error(w, "invalid suppression id", http.StatusBadRequest)
 			return
 		}
-		if e = db.DeleteSuppression(r.Context(), id); e != nil {
+		if e = db.DeleteSuppressionBy(r.Context(), id, auth.Actor(r)); e != nil {
 			http.Error(w, "could not delete suppression", http.StatusInternalServerError)
 			return
 		}
@@ -897,7 +896,7 @@ func serve(args []string) {
 			Comment    string `json:"comment"`
 			Actor      string `json:"actor"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil || input.IncidentID == "" {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&input); err != nil || input.IncidentID == "" || len(input.Comment) > 2000 {
 			http.Error(w, "invalid JSON: incident_id is required", http.StatusBadRequest)
 			return
 		}
@@ -905,7 +904,7 @@ func serve(args []string) {
 			http.Error(w, "verdict must be tp, fp or ack", http.StatusBadRequest)
 			return
 		}
-		if err := db.AddFeedback(r.Context(), input.IncidentID, input.Verdict, input.Comment, input.Actor); err != nil {
+		if err := db.AddFeedback(r.Context(), input.IncidentID, input.Verdict, input.Comment, auth.Actor(r)); err != nil {
 			http.Error(w, "could not save feedback", http.StatusInternalServerError)
 			return
 		}
@@ -917,7 +916,7 @@ func serve(args []string) {
 						"match":      map[string]string{"fingerprint": incident.Fingerprint},
 						"action":     "drop",
 						"reason":     fmt.Sprintf("fingerprint received %d false-positive verdicts", count),
-						"created_by": input.Actor,
+						"created_by": auth.Actor(r),
 					}
 				}
 			}

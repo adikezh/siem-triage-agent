@@ -6,6 +6,7 @@ import (
 	"github.com/adikezh/siem-triage-agent/internal/store"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -57,7 +58,10 @@ func TestIncidentDetailAndFeedback(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "Incident payload") {
 		t.Fatalf("detail %d %s", w.Code, w.Body.String())
 	}
-	r = httptest.NewRequest("POST", "/incidents/inc-1/feedback", strings.NewReader("verdict=fp"))
+	token := csrfFrom(t, w.Body.String())
+	cookie := w.Result().Cookies()[0]
+	r = httptest.NewRequest("POST", "/incidents/inc-1/feedback", strings.NewReader(url.Values{"verdict": {"fp"}, "_csrf": {token}}.Encode()))
+	r.AddCookie(cookie)
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, r)

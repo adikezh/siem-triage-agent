@@ -6,6 +6,13 @@ tasks:
     cmds: [go vet ./...]
   build:
     cmds: [go build -trimpath -o triage .]
+  ui:
+    desc: Regenerate server templates and embedded browser assets
+    cmds:
+      - npm ci --ignore-scripts
+      - npm run vendor:htmx
+      - npm run build:css
+      - go run github.com/a-h/templ/cmd/templ@v0.3.1020 generate -path internal/web
   demo:
     cmds: [docker compose up --build]
   helm-lint:

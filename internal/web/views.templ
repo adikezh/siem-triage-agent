@@ -1,0 +1,265 @@
+package web
+
+import "net/url"
+import "strings"
+
+templ screen(v viewModel) {
+	<!DOCTYPE html>
+	<html lang={ v.Lang }>
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"historyCacheSize":0}'/>
+			<title>SIEM Triage · { v.T("Analyst workbench") }</title>
+			<link rel="stylesheet" href="/static/app.css"/>
+			<script src="/static/htmx.min.js" defer></script>
+		</head>
+		<body hx-history="false">
+			<a class="skip" href="#main">{ v.T("Analyst workbench") }</a>
+			<header>
+				<div class="brand"><span class="brand-mark">ST</span><div><strong>SIEM Triage</strong><small>{ v.T("Analyst workbench") }</small></div></div>
+				<nav aria-label={ v.T("Navigation") } hx-boost="true">
+					<a href="/" aria-current={ current(v.Page, "incidents", "detail") }>{ v.T("Incidents") }</a>
+					<a href="/stats" aria-current={ current(v.Page, "stats") }>{ v.T("Dashboard") }</a>
+					<a href="/suppressions" aria-current={ current(v.Page, "suppressions", "new-suppression") }>{ v.T("Suppressions") }</a>
+					<a href="/assets" aria-current={ current(v.Page, "assets") }>{ v.T("Assets") }</a>
+				</nav>
+				<div class="account">
+					<a href="?lang=en" lang="en">EN</a><a href="?lang=ru" lang="ru">RU</a><a href="?lang=kk" lang="kk">ҚАЗ</a>
+					if v.Page != "login" {
+						<span>{ v.Who.Actor } · { v.Who.Role }</span>
+						if !v.Demo {
+							<form method="post" action="/logout">
+								@csrf(v)
+								<button class="secondary">{ v.T("Sign out") }</button>
+							</form>
+						}
+					}
+				</div>
+			</header>
+			<main id="main">
+				if v.Demo {
+					<p class="notice">{ v.T("Demo mode — no API keys configured") }</p>
+				}
+				switch v.Page {
+					case "login":
+						<section class="panel login">
+							<h1>{ v.T("Sign in") }</h1>
+							<p>{ v.T("Authenticate with an issued API key. It is not stored in your browser.") }</p>
+							if v.Error != "" {
+								<p role="alert" class="notice">{ v.Error }</p>
+							}
+							<form method="post" action="/login">
+								@csrf(v)
+								<label>{ v.T("API key") }<input name="key" type="password" autocomplete="off" maxlength="1024" required/></label><button>{ v.T("Sign in") }</button>
+							</form>
+						</section>
+					case "incidents":
+						<h1>{ v.T("Incidents") }</h1>
+						<form class="filters" method="get" action="/" hx-boost="true">
+							<label>
+								{ v.T("Severity") }
+								<select name="severity">
+									<option value="">{ v.T("All") }</option>
+									for _, s := range []string{"critical","high","medium","low"} {
+										<option value={ s } selected?={ s==v.Severity }>{ v.T(s) }</option>
+									}
+								</select>
+							</label>
+							<label>{ v.T("Since") }<input name="since" value={ v.Since } placeholder="2026-10-01T00:00:00Z"/></label>
+							<label>{ v.T("Limit") }<input name="limit" type="number" min="1" max="1000" value="100"/></label><button>{ v.T("Filter") }</button>
+						</form>
+						<div class="table-wrap">
+							<table>
+								<thead><tr><th>{ v.T("Fingerprint") }</th><th>{ v.T("Severity") }</th><th>{ v.T("Score") }</th><th>{ v.T("Alerts") }</th><th>{ v.T("Last seen") }</th></tr></thead>
+								<tbody>
+									for _, x := range v.Rows {
+										<tr><td class="identifier"><a href={ safe(incidentURL(x.ID)) }>{ x.Fingerprint }</a></td><td><span class={ "severity " + x.Severity }>{ v.T(x.Severity) }</span></td><td>{ str(x.Score) }</td><td>{ str(x.AlertCount) }</td><td><time>{ x.LastSeen }</time></td></tr>
+									}
+									if len(v.Rows)==0 {
+										<tr><td colspan="5">{ v.T("No incidents yet.") }</td></tr>
+									}
+								</tbody>
+							</table>
+						</div>
+					case "detail":
+						<a class="back" href="/">← { v.T("Incidents") }</a>
+						<h1>{ v.T("Incident") } <span class={ "severity " + v.Detail.Severity }>{ v.T(v.Detail.Severity) }</span></h1>
+						<p class="identifier">{ v.Detail.ID }</p>
+						<div class="grid lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)] gap-6">
+							<div class="min-w-0">
+								<section class="panel">
+									<dl class="facts"><div><dt>{ v.T("Score") }</dt><dd>{ str(v.Detail.Score) }</dd></div><div><dt>{ v.T("Alerts") }</dt><dd>{ str(v.Detail.AlertCount) }</dd></div><div><dt>{ v.T("First seen") }</dt><dd>{ v.Detail.FirstSeen }</dd></div><div><dt>{ v.T("Last seen") }</dt><dd>{ v.Detail.LastSeen }</dd></div></dl>
+									<h2>{ v.T("Explanation") }</h2>
+									if v.Summary!="" {
+										<p class="explanation">{ v.Summary }</p>
+									} else {
+										<p>{ v.T("No model explanation available. Review the evidence below.") }</p>
+									}
+									if len(v.Actions)>0 {
+										<h2>{ v.T("Suggested actions") }</h2>
+										<ol class="list-decimal pl-6 mb-6">
+											for _, action := range v.Actions {
+												<li>{ action }</li>
+											}
+										</ol>
+									}
+									<dl class="facts"><div><dt>{ v.T("Source IP") }</dt><dd>{ v.SrcIP }</dd></div><div><dt>{ v.T("Agent ID") }</dt><dd>{ v.AgentID }</dd></div></dl>
+									<h2>{ v.T("Incident payload") }</h2>
+									<pre>{ v.Raw }</pre>
+								</section>
+							</div>
+							<aside class="min-w-0">
+								<section class="panel">
+									<h2>{ v.T("Analyst verdict") }</h2>
+									if v.CanWrite() {
+										<form method="post" action={ safe(incidentURL(v.Detail.ID) + "/feedback") }>
+											@csrf(v)
+											<label>{ v.T("Comment") }<textarea name="comment" maxlength="2000" rows="3"></textarea></label>
+											<div class="verdicts"><button name="verdict" value="tp">{ v.T("True positive") }</button><button class="secondary" name="verdict" value="fp">{ v.T("False positive") }</button><button class="secondary" name="verdict" value="ack">{ v.T("Acknowledge") }</button></div>
+										</form>
+									} else {
+										<p>{ v.T("Read-only access") }</p>
+									}
+									if v.Suggest && v.CanWrite() {
+										<div class="notice"><strong>{ v.T("Repeated false positives") }</strong><p><a href={ safe("/suppressions/new?incident=" + url.QueryEscape(v.Detail.ID)) }>{ v.T("Review a suppression") } →</a></p></div>
+									}
+								</section>
+								<section class="panel">
+									<h2>{ v.T("Feedback history") }</h2>
+									for _, f := range v.Feedback {
+										<article class="feedback"><strong>{ f.Verdict }</strong><small>{ f.Actor } · { f.CreatedAt }</small><p>{ f.Comment }</p></article>
+									}
+									if len(v.Feedback)==0 {
+										<p>{ v.T("No feedback yet.") }</p>
+									}
+								</section>
+							</aside>
+						</div>
+					case "suppressions":
+						<div class="heading">
+							<h1>{ v.T("Suppressions") }</h1>
+							if v.CanWrite() {
+								<a class="button" href="/suppressions/new">+ { v.T("New suppression") }</a>
+							}
+						</div>
+						<div class="table-wrap">
+							<table>
+								<thead>
+									<tr>
+										<th>{ v.T("Fingerprint") } / { v.T("Match") }</th>
+										<th>{ v.T("Action") }</th>
+										<th>{ v.T("Reason") }</th>
+										<th>{ v.T("Expires") }</th>
+										<th>{ v.T("Created by") }</th>
+										if v.CanDelete() {
+											<th>{ v.T("Delete") }</th>
+										}
+									</tr>
+								</thead>
+								<tbody>
+									for _, x := range v.Suppressions {
+										<tr>
+											<td class="identifier">{ x.Fingerprint }{ x.MatchJSON }</td>
+											<td>{ v.T(x.Action) }</td>
+											<td>{ x.Reason }</td>
+											<td>{ x.ExpiresAt }</td>
+											<td>{ x.CreatedBy }</td>
+											if v.CanDelete() {
+												<td>
+													<form method="post" action={ safe(suppressionURL(x.ID)) }>
+														@csrf(v)
+														<button class="danger">{ v.T("Delete") }</button>
+													</form>
+												</td>
+											}
+										</tr>
+									}
+									if len(v.Suppressions)==0 {
+										<tr><td colspan="6">{ v.T("No suppressions.") }</td></tr>
+									}
+								</tbody>
+							</table>
+						</div>
+					case "new-suppression":
+						<h1>{ v.T("New suppression") }</h1>
+						<section class="panel max-w-4xl">
+							<p>{ v.T("At least one match condition is required. All populated conditions must match.") }</p>
+							<form method="post" action="/suppressions">
+								@csrf(v)
+								<div class="grid md:grid-cols-2 gap-4"><label>{ v.T("Fingerprint") }<input name="fingerprint" value={ v.Fingerprint } maxlength="1024"/></label><label>{ v.T("Rule ID") }<input name="rule_id" maxlength="1024"/></label><label>{ v.T("Source IP / CIDR / glob") }<input name="src_ip" maxlength="1024"/></label><label>{ v.T("Agent ID") }<input name="agent_id" maxlength="1024"/></label><label>{ v.T("Description regex") }<input name="description" maxlength="1024"/></label><label>{ v.T("Groups, comma separated") }<input name="groups" maxlength="1024"/></label><label>{ v.T("Action") }<select name="action"><option value="drop">{ v.T("Drop") }</option><option value="downgrade">{ v.T("Downgrade") }</option><option value="tag">{ v.T("Tag") }</option></select></label><label>{ v.T("Expires at (RFC3339, optional)") }<input name="expires_at" placeholder="2026-12-31T23:59:59Z"/></label></div>
+								<label>{ v.T("Reason") }<textarea name="reason" maxlength="2000" required rows="3"></textarea></label>
+								<div class="actions"><button>{ v.T("Create suppression") }</button><a href="/suppressions">{ v.T("Cancel") }</a></div>
+							</form>
+						</section>
+					case "assets":
+						<h1>{ v.T("Assets") }</h1>
+						<div class="table-wrap">
+							<table>
+								<thead>
+									<tr>
+										for _, k := range []string{"Source IP / CIDR / glob","Hostname","Owner","Environment","Criticality","Tags"} {
+											<th>{ v.T(k) }</th>
+										}
+									</tr>
+								</thead>
+								<tbody>
+									for _, x := range v.Assets {
+										<tr><td>{ x.IP }</td><td>{ x.Hostname }</td><td>{ x.Owner }</td><td>{ x.Environment }</td><td>{ str(x.Criticality) }</td><td>{ strings.Join(x.Tags,", ") }</td></tr>
+									}
+									if len(v.Assets)==0 {
+										<tr><td colspan="6">{ v.T("No assets configured.") }</td></tr>
+									}
+								</tbody>
+							</table>
+						</div>
+					case "stats":
+						<h1>{ v.T("Dashboard") }</h1>
+						<form class="filters" method="get" action="/stats" hx-boost="true"><label>{ v.T("Time range") }<select name="range"><option value="all" selected?={ v.Range=="all" }>{ v.T("All time") }</option><option value="24h" selected?={ v.Range=="24h" }>{ v.T("Last 24 hours") }</option><option value="7d" selected?={ v.Range=="7d" }>{ v.T("Last 7 days") }</option></select></label><button>{ v.T("Filter") }</button></form>
+						<section class="panel">
+							<h2>{ v.T("Incidents") }</h2>
+							<p>{ v.T("Total") }: { str(v.Total) }</p>@counts(v, v.Counts, "Severity")
+						</section>
+						<div class="grid md:grid-cols-2 gap-6">
+							<section class="panel">
+								<h2>{ v.T("Top source IPs") }</h2>@counts(v, v.TopSrcIP, "Source IP / CIDR / glob")
+							</section>
+							<section class="panel">
+								<h2>{ v.T("MITRE tactics") }</h2>@counts(v, v.TopMITRE, "MITRE tactics")
+							</section>
+						</div>
+						<section class="panel"><h2>{ v.T("Feedback and delivery — all time") }</h2><dl class="facts"><div><dt>{ v.T("FP rate") }</dt><dd>{ decimal(v.FPPercent) }%</dd></div><div><dt>{ v.T("MTTA (seconds)") }</dt><dd>{ decimal(v.Metrics.MTTASeconds) }</dd></div><div><dt>{ v.T("LLM calls / errors") }</dt><dd>{ str(v.Metrics.LLMCalls) } / { str(v.Metrics.LLMErrors) }</dd></div><div><dt>{ v.T("Outbox pending / sent / failed") }</dt><dd>{ str(v.Metrics.OutboxPending) } / { str(v.Metrics.OutboxSent) } / { str(v.Metrics.OutboxFailed) }</dd></div></dl></section>
+				}
+			</main>
+		</body>
+	</html>
+}
+
+templ csrf(v viewModel) {
+	<input type="hidden" name="_csrf" value={ v.CSRF }/>
+}
+
+templ counts(v viewModel, items []countItem, title string) {
+	<div class="table-wrap">
+		<table>
+			<thead><tr><th>{ v.T(title) }</th><th>{ v.T("Count") }</th></tr></thead>
+			<tbody>
+				for _, x := range items {
+					<tr><td>{ v.T(x.Name) }</td><td>{ str(x.Count) }</td></tr>
+				}
+				if len(items)==0 {
+					<tr><td colspan="2">{ v.T("No data.") }</td></tr>
+				}
+			</tbody>
+		</table>
+	</div>
+}
+
+func current(page string, pages ...string) string {
+	for _, p := range pages {
+		if page == p {
+			return "page"
+		}
+	}
+	return "false"
+}

@@ -1,51 +1,73 @@
 package web
 
 import (
+	"bytes"
+	"embed"
 	"encoding/json"
-	"html/template"
+	"fmt"
+	"io/fs"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/a-h/templ"
+	"github.com/adikezh/siem-triage-agent/internal/auth"
 	"github.com/adikezh/siem-triage-agent/internal/enrich"
+	"github.com/adikezh/siem-triage-agent/internal/httpapi"
+	"github.com/adikezh/siem-triage-agent/internal/rules"
 	"github.com/adikezh/siem-triage-agent/internal/store"
 )
 
-var page = template.Must(template.New("dashboard").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>SIEM Triage</title><style>body{font:16px system-ui;margin:2rem;background:#f6f7f9;color:#18212b}main{max-width:1100px;margin:auto}table,.card{width:100%;background:white;border-collapse:collapse;padding:1rem}.card{box-sizing:border-box}th,td{padding:.7rem;border-bottom:1px solid #ddd;text-align:left}.severity{font-weight:700}.actions{display:flex;gap:.5rem;margin:1rem 0}button{padding:.5rem .8rem}pre{white-space:pre-wrap;overflow:auto;background:#f0f2f5;padding:1rem}.filters{background:white;padding:1rem;margin:1rem 0}</style></head><body><main><h1>SIEM Triage</h1><p><a href="/">Incidents</a> · <a href="/stats">Dashboard</a> · <a href="/suppressions">Suppressions</a> · <a href="/assets">Assets</a></p>{{if .Detail}}<section class="card"><h2>{{.Detail.Severity}} — {{.Detail.ID}}</h2><p><b>Fingerprint:</b> {{.Detail.Fingerprint}}</p><p><b>Score:</b> {{.Detail.Score}} &nbsp; <b>Alerts:</b> {{.Detail.AlertCount}}</p><p><b>First seen:</b> {{.Detail.FirstSeen}}<br><b>Last seen:</b> {{.Detail.LastSeen}}</p><div class="actions"><form method="post" action="/incidents/{{.Detail.ID}}/feedback"><button name="verdict" value="tp">✅ TP</button><button name="verdict" value="fp">❌ FP</button><button name="verdict" value="ack">👁 Ack</button></form></div><h3>Incident payload / timeline</h3><pre>{{.Detail.Payload}}</pre></section>{{else}}<section class="filters"><form method="get" action="/"><label>Severity <select name="severity"><option value="">all</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="critical">critical</option></select></label> <label>Since <input name="since" placeholder="2026-09-23T00:00:00Z"></label> <label>Limit <input name="limit" type="number" min="1" max="1000"></label> <button>Filter</button></form><p>Total shown: {{len .Rows}} | Low: {{index .Counts "low"}} | Medium: {{index .Counts "medium"}} | High: {{index .Counts "high"}} | Critical: {{index .Counts "critical"}}</p></section>{{if .Rows}}<table><thead><tr><th>Fingerprint</th><th>Severity</th><th>Score</th><th>Alerts</th><th>Last seen</th></tr></thead><tbody>{{range .Rows}}<tr><td><a href="/incidents/{{.ID}}">{{.Fingerprint}}</a></td><td class="severity">{{.Severity}}</td><td>{{.Severity}}</td><td>{{.Score}}</td><td>{{.AlertCount}}</td><td>{{.LastSeen}}</td></tr>{{end}}</tbody></table>{{else}}<p>No incidents yet.</p>{{end}}{{end}}</main></body></html>`))
-var suppressionsPage = template.Must(template.New("suppressions").Parse(`<!doctype html><html><body><main><h1>Suppressions</h1><p><a href="/">Incidents</a> · <a href="/assets">Assets</a></p><table><tr><th>Fingerprint</th><th>Action</th><th>Reason</th><th>Expires</th><th>Created by</th></tr>{{range .Suppressions}}<tr><td>{{.Fingerprint}}</td><td>{{.Action}}</td><td>{{.Reason}}</td><td>{{.ExpiresAt}}</td><td>{{.CreatedBy}}</td></tr>{{else}}<tr><td colspan="5">No suppressions.</td></tr>{{end}}</table></main></body></html>`))
-var assetsPage = template.Must(template.New("assets").Parse(`<!doctype html><html><body><main><h1>Assets</h1><p><a href="/">Incidents</a> · <a href="/suppressions">Suppressions</a></p><table><tr><th>IP</th><th>Hostname</th><th>Owner</th><th>Environment</th><th>Criticality</th><th>Tags</th></tr>{{range .Assets}}<tr><td>{{.IP}}</td><td>{{.Hostname}}</td><td>{{.Owner}}</td><td>{{.Environment}}</td><td>{{.Criticality}}</td><td>{{.Tags}}</td></tr>{{else}}<tr><td colspan="6">No assets configured.</td></tr>{{end}}</table></main></body></html>`))
-var statsPage = template.Must(template.New("stats").Parse(`<!doctype html><html><body><main><h1>Dashboard</h1><p><a href="/">Incidents</a> · <a href="/suppressions">Suppressions</a> · <a href="/assets">Assets</a></p><section class="card"><h2>Incidents</h2><p>Total: {{.Total}}</p><table><tr><th>Severity</th><th>Count</th></tr>{{range .Severity}}<tr><td>{{.Name}}</td><td>{{.Count}}</td></tr>{{end}}</table></section><section class="card"><h2>Top source IPs</h2><table><tr><th>Source IP</th><th>Incidents</th></tr>{{range .TopSrcIP}}<tr><td>{{.Name}}</td><td>{{.Count}}</td></tr>{{else}}<tr><td colspan="2">No source IP data.</td></tr>{{end}}</table><h2>MITRE tactics</h2><table><tr><th>Tactic</th><th>Incidents</th></tr>{{range .TopMITRE}}<tr><td>{{.Name}}</td><td>{{.Count}}</td></tr>{{else}}<tr><td colspan="2">No MITRE data.</td></tr>{{end}}</table></section><section class="card"><h2>Feedback</h2><p>TP: {{.Metrics.FeedbackTP}} · FP: {{.Metrics.FeedbackFP}} · Ack: {{.Metrics.FeedbackAck}} · FP rate: {{printf "%.1f" .FPPercent}}%</p><p>MTTA: {{printf "%.0f" .Metrics.MTTASeconds}} seconds</p></section><section class="card"><h2>LLM and delivery</h2><p>Calls: {{.Metrics.LLMCalls}} · Used: {{.Metrics.LLMUsed}} · Errors: {{.Metrics.LLMErrors}} · Average latency: {{printf "%.0f" .Metrics.LLMLatencyMS}} ms</p><p>Outbox pending: {{.Metrics.OutboxPending}} · Sent: {{.Metrics.OutboxSent}} · Failed: {{.Metrics.OutboxFailed}}</p></section></main></body></html>`))
+//go:embed static/*
+var static embed.FS
 
-type viewModel struct {
-	Rows         []store.Record
-	Detail       *store.Record
-	Counts       map[string]int
-	Suppressions []store.SuppressionRecord
-	Assets       []enrich.Asset
-	Total        int
-	Severity     []severityCount
-	Metrics      store.MetricsSnapshot
-	FPPercent    float64
-	TopSrcIP     []countItem
-	TopMITRE     []countItem
+type Config struct {
+	Assets        map[string]enrich.Asset
+	Access        auth.Access
+	Language      string
+	SecureCookies bool
+	PublicOrigin  string
 }
-
-type severityCount struct {
-	Name  string
-	Count int
+type dashboard struct {
+	store    *store.Store
+	config   Config
+	sessions sessions
+	files    http.Handler
 }
-
 type countItem struct {
 	Name  string
 	Count int
 }
+type viewModel struct {
+	Actions                                                                    []string
+	SrcIP, AgentID                                                             string
+	Lang, Page, CSRF, Error, Fingerprint, Raw, Summary, Severity, Since, Range string
+	Who                                                                        auth.Identity
+	Demo, Suggest                                                              bool
+	Rows                                                                       []store.Record
+	Detail                                                                     store.Record
+	Feedback                                                                   []store.FeedbackRecord
+	Suppressions                                                               []store.SuppressionRecord
+	Assets                                                                     []enrich.Asset
+	Counts, TopSrcIP, TopMITRE                                                 []countItem
+	Metrics                                                                    store.MetricsSnapshot
+	Total                                                                      int
+	FPPercent                                                                  float64
+}
 
+func (v viewModel) CanWrite() bool   { return auth.Allowed(v.Who.Role, "analyst", "admin") }
+func (v viewModel) CanDelete() bool  { return v.Who.Role == "admin" }
+func incidentURL(id string) string   { return "/incidents/" + url.PathEscape(id) }
+func suppressionURL(id int64) string { return fmt.Sprintf("/suppressions/%d/delete", id) }
+func str(n int) string               { return strconv.Itoa(n) }
+func decimal(n float64) string       { return fmt.Sprintf("%.1f", n) }
 func topCounts(values map[string]int, limit int) []countItem {
 	out := make([]countItem, 0, len(values))
 	for name, count := range values {
-		out = append(out, countItem{Name: name, Count: count})
+		out = append(out, countItem{name, count})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Count == out[j].Count {
@@ -58,159 +80,365 @@ func topCounts(values map[string]int, limit int) []countItem {
 	}
 	return out
 }
-
-func Handler(s *store.Store) http.Handler {
-	return HandlerWithAssets(s, nil)
+func Handler(s *store.Store) http.Handler { return HandlerWithAssets(s, nil) }
+func HandlerWithAssets(s *store.Store, assets map[string]enrich.Asset) http.Handler {
+	return NewHandler(s, Config{Assets: assets, Access: auth.StoreAccess(s, "", "")})
 }
-
-func HandlerWithAssets(s *store.Store, configuredAssets map[string]enrich.Asset) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path := strings.TrimPrefix(r.URL.Path, "/")
-		if r.Method == http.MethodGet && r.URL.Path == "/stats" {
-			rows, err := s.ListIncidents(r.Context())
-			if err != nil {
-				http.Error(w, "storage error", http.StatusInternalServerError)
-				return
-			}
-			metrics, err := s.Metrics(r.Context())
-			if err != nil {
-				http.Error(w, "storage error", http.StatusInternalServerError)
-				return
-			}
-			counts := map[string]int{}
-			srcIPs := map[string]int{}
-			tactics := map[string]int{}
-			for _, row := range rows {
-				counts[row.Severity]++
-				var incident struct {
-					SrcIP        string   `json:"src_ip"`
-					MITRETactics []string `json:"mitre_tactics"`
-				}
-				if json.Unmarshal(row.Payload, &incident) == nil {
-					if incident.SrcIP != "" {
-						srcIPs[incident.SrcIP]++
-					}
-					for _, tactic := range incident.MITRETactics {
-						tactics[tactic]++
-					}
-				}
-			}
-			severity := make([]severityCount, 0, 4)
-			for _, name := range []string{"low", "medium", "high", "critical"} {
-				severity = append(severity, severityCount{Name: name, Count: counts[name]})
-			}
-			feedbackTotal := metrics.FeedbackTP + metrics.FeedbackFP
-			fpPercent := 0.0
-			if feedbackTotal > 0 {
-				fpPercent = float64(metrics.FeedbackFP) * 100 / float64(feedbackTotal)
-			}
-			w.Header().Set("content-type", "text/html; charset=utf-8")
-			_ = statsPage.Execute(w, viewModel{Total: len(rows), Severity: severity, Metrics: metrics, FPPercent: fpPercent, TopSrcIP: topCounts(srcIPs, 10), TopMITRE: topCounts(tactics, 10)})
+func NewHandler(s *store.Store, cfg Config) http.Handler {
+	assets, _ := fs.Sub(static, "static")
+	if cfg.Access.Initialized == nil {
+		cfg.Access = auth.StoreAccess(s, cfg.Access.EnvHash, cfg.Access.EnvRole)
+	}
+	return httpapi.RateLimit(&dashboard{store: s, config: cfg, sessions: sessions{values: make(map[string]session)}, files: http.StripPrefix("/static/", http.FileServer(http.FS(assets)))}, 120, time.Minute)
+}
+func (d *dashboard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "same-origin")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+	if strings.HasPrefix(r.URL.Path, "/static/") {
+		d.files.ServeHTTP(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	required, err := d.config.Access.Required(r.Context())
+	if err != nil {
+		http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	v := viewModel{Lang: language(d.config.Language), Demo: !required, Range: r.URL.Query().Get("range")}
+	if c, e := r.Cookie("triage_language"); e == nil {
+		v.Lang = language(c.Value)
+	}
+	if lang := r.URL.Query().Get("lang"); lang != "" {
+		v.Lang = language(lang)
+		http.SetCookie(w, &http.Cookie{Name: "triage_language", Value: v.Lang, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: d.config.SecureCookies || r.TLS != nil})
+	}
+	sess, ok := d.sessions.get(r)
+	if r.Method == http.MethodPost {
+		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form", http.StatusBadRequest)
 			return
 		}
-		if r.Method == http.MethodGet && r.URL.Path == "/suppressions" {
-			rows, err := s.ListSuppressions(r.Context())
+		if !ok || !checkCSRF(r, sess, d.config.PublicOrigin) {
+			http.Error(w, "invalid CSRF token or origin", http.StatusForbidden)
+			return
+		}
+	}
+	if r.URL.Path == "/login" {
+		if !ok {
+			sess, err = d.sessions.create(w, r, "", d.config.SecureCookies)
 			if err != nil {
-				http.Error(w, "storage error", http.StatusInternalServerError)
+				http.Error(w, "session unavailable", http.StatusServiceUnavailable)
 				return
 			}
-			w.Header().Set("content-type", "text/html; charset=utf-8")
-			_ = suppressionsPage.Execute(w, viewModel{Suppressions: rows})
-			return
 		}
-		if r.Method == http.MethodGet && r.URL.Path == "/assets" {
-			assets := make([]enrich.Asset, 0, len(configuredAssets))
-			for _, asset := range configuredAssets {
-				assets = append(assets, asset)
+		v.CSRF = sess.CSRF
+		v.Page = "login"
+		if r.Method == http.MethodPost {
+			key := strings.TrimSpace(r.PostForm.Get("key"))
+			_, valid, e := d.config.Access.Resolve(r.Context(), auth.HashKey(key))
+			if e != nil {
+				http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
+				return
 			}
-			for i := range assets {
-				for j := i + 1; j < len(assets); j++ {
-					if assets[j].IP < assets[i].IP {
-						assets[i], assets[j] = assets[j], assets[i]
-					}
+			if valid {
+				if _, e = d.sessions.create(w, r, auth.HashKey(key), d.config.SecureCookies); e != nil {
+					http.Error(w, "session unavailable", http.StatusServiceUnavailable)
+					return
 				}
+				d.sessions.remove(sess.ID)
+				http.Redirect(w, r, "/", http.StatusSeeOther)
+				return
 			}
-			w.Header().Set("content-type", "text/html; charset=utf-8")
-			_ = assetsPage.Execute(w, viewModel{Assets: assets})
+			v.Error = v.T("Invalid API key")
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusUnauthorized)
+		} else if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if strings.HasPrefix(path, "incidents/") {
-			parts := strings.Split(strings.TrimPrefix(path, "incidents/"), "/")
-			id := parts[0]
-			if id == "" {
+		d.render(w, r, v)
+		return
+	}
+	who := auth.Identity{Actor: "demo", Role: "admin"}
+	if required {
+		var valid bool
+		if ok && sess.KeyHash != "" {
+			who, valid, err = d.config.Access.Resolve(r.Context(), sess.KeyHash)
+		}
+		if err != nil {
+			http.Error(w, "authentication unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if !valid {
+			if r.Method == http.MethodGet {
+				http.Redirect(w, r, "/login", http.StatusSeeOther)
+			} else {
+				http.Error(w, "authentication required", http.StatusUnauthorized)
+			}
+			return
+		}
+	}
+	if !ok {
+		sess, err = d.sessions.create(w, r, "", d.config.SecureCookies)
+		if err != nil {
+			http.Error(w, "session unavailable", http.StatusServiceUnavailable)
+			return
+		}
+	}
+	v.Who = who
+	v.CSRF = sess.CSRF
+	if r.Method == http.MethodPost {
+		if r.URL.Path == "/logout" {
+			d.sessions.remove(sess.ID)
+			http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: d.config.SecureCookies || r.TLS != nil, MaxAge: -1})
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		if !v.CanWrite() {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/incidents/") && strings.HasSuffix(r.URL.EscapedPath(), "/feedback") {
+			id, e := url.PathUnescape(strings.TrimSuffix(strings.TrimPrefix(r.URL.EscapedPath(), "/incidents/"), "/feedback"))
+			if e != nil {
+				http.Error(w, "invalid ID", http.StatusBadRequest)
+				return
+			}
+			verdict, comment := r.PostForm.Get("verdict"), r.PostForm.Get("comment")
+			if !auth.Allowed(verdict, "tp", "fp", "ack") || len(comment) > 2000 {
+				http.Error(w, "invalid verdict or comment", http.StatusBadRequest)
+				return
+			}
+			if _, e = d.store.GetIncident(r.Context(), id); e != nil {
 				http.NotFound(w, r)
 				return
 			}
-			if len(parts) == 2 && parts[1] == "feedback" {
-				if r.Method != http.MethodPost {
-					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-					return
-				}
-				if err := r.ParseForm(); err != nil {
-					http.Error(w, "invalid form", http.StatusBadRequest)
-					return
-				}
-				verdict := r.FormValue("verdict")
-				if verdict != "tp" && verdict != "fp" && verdict != "ack" {
-					http.Error(w, "invalid verdict", http.StatusBadRequest)
-					return
-				}
-				if err := s.AddFeedback(r.Context(), id, verdict, "", "web"); err != nil {
-					http.Error(w, "could not save feedback", http.StatusInternalServerError)
-					return
-				}
-				http.Redirect(w, r, "/incidents/"+id, http.StatusSeeOther)
+			if e = d.store.AddFeedback(r.Context(), id, verdict, comment, who.Actor); e != nil {
+				http.Error(w, "could not save feedback", http.StatusInternalServerError)
 				return
 			}
-			if r.Method != http.MethodGet {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-				return
-			}
-			record, err := s.GetIncident(r.Context(), id)
-			if err != nil {
-				http.NotFound(w, r)
-				return
-			}
-			record.Payload = []byte(template.HTMLEscapeString(string(record.Payload)))
-			w.Header().Set("content-type", "text/html; charset=utf-8")
-			_ = page.Execute(w, viewModel{Detail: &record})
+			http.Redirect(w, r, incidentURL(id), http.StatusSeeOther)
 			return
 		}
-		if r.URL.Path != "/" || r.Method != http.MethodGet {
-			http.NotFound(w, r)
+		if r.URL.Path == "/suppressions" {
+			d.createSuppression(w, r, v)
 			return
 		}
-		q := r.URL.Query()
-		severity, since := q.Get("severity"), q.Get("since")
-		limit := 0
-		if severity != "" && severity != "low" && severity != "medium" && severity != "high" && severity != "critical" {
+		if strings.HasPrefix(r.URL.Path, "/suppressions/") && strings.HasSuffix(r.URL.Path, "/delete") {
+			if !v.CanDelete() {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+			id, e := strconv.ParseInt(strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/suppressions/"), "/delete"), 10, 64)
+			if e != nil || id <= 0 {
+				http.Error(w, "invalid ID", http.StatusBadRequest)
+				return
+			}
+			if e = d.store.DeleteSuppressionBy(r.Context(), id, who.Actor); e != nil {
+				http.Error(w, "could not delete suppression", http.StatusInternalServerError)
+				return
+			}
+			http.Redirect(w, r, "/suppressions", http.StatusSeeOther)
+			return
+		}
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	switch {
+	case r.URL.Path == "/":
+		v.Page = "incidents"
+		v.Severity = r.URL.Query().Get("severity")
+		v.Since = r.URL.Query().Get("since")
+		if v.Severity != "" && !auth.Allowed(v.Severity, "low", "medium", "high", "critical") {
 			http.Error(w, "invalid severity", http.StatusBadRequest)
 			return
 		}
-		if since != "" {
-			if _, err := time.Parse(time.RFC3339, since); err != nil {
+		if v.Since != "" {
+			if _, e := time.Parse(time.RFC3339, v.Since); e != nil {
 				http.Error(w, "invalid since", http.StatusBadRequest)
 				return
 			}
 		}
-		if raw := q.Get("limit"); raw != "" {
-			n, err := strconv.Atoi(raw)
-			if err != nil || n < 1 || n > 1000 {
+		limit := 100
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			n, e := strconv.Atoi(raw)
+			if e != nil || n < 1 || n > 1000 {
 				http.Error(w, "invalid limit", http.StatusBadRequest)
 				return
 			}
 			limit = n
 		}
-		rows, err := s.ListIncidentsFiltered(r.Context(), severity, since, limit)
-		if err != nil {
-			http.Error(w, "storage error", 500)
+		v.Rows, err = d.store.ListIncidentsFiltered(r.Context(), v.Severity, v.Since, limit)
+	case strings.HasPrefix(r.URL.Path, "/incidents/"):
+		v.Page = "detail"
+		id, e := url.PathUnescape(strings.TrimPrefix(r.URL.EscapedPath(), "/incidents/"))
+		if e != nil {
+			http.Error(w, "invalid ID", http.StatusBadRequest)
 			return
 		}
-		w.Header().Set("content-type", "text/html; charset=utf-8")
-		counts := map[string]int{}
-		for _, row := range rows {
-			counts[row.Severity]++
+		v.Detail, err = d.store.GetIncident(r.Context(), id)
+		if err != nil {
+			http.NotFound(w, r)
+			return
 		}
-		_ = page.Execute(w, viewModel{Rows: rows, Counts: counts})
-	})
+		var pretty bytes.Buffer
+		if e = json.Indent(&pretty, v.Detail.Payload, "", "  "); e == nil {
+			v.Raw = pretty.String()
+		} else {
+			v.Raw = string(v.Detail.Payload)
+		}
+		var payload struct {
+			Triage struct {
+				Summary string `json:"Summary"`
+			} `json:"triage"`
+			Summary string   `json:"summary"`
+			Actions []string `json:"actions"`
+			SrcIP   string   `json:"src_ip"`
+			AgentID string   `json:"agent_id"`
+		}
+		_ = json.Unmarshal(v.Detail.Payload, &payload)
+		v.Actions, v.SrcIP, v.AgentID = payload.Actions, payload.SrcIP, payload.AgentID
+		v.Summary = payload.Triage.Summary
+		if v.Summary == "" {
+			v.Summary = payload.Summary
+		}
+		var feedback []store.FeedbackRecord
+		feedback, err = d.store.ListFeedback(r.Context())
+		for _, x := range feedback {
+			if x.IncidentID == id {
+				v.Feedback = append(v.Feedback, x)
+			}
+		}
+		if err == nil {
+			var n int
+			n, err = d.store.FalsePositiveCount(r.Context(), v.Detail.Fingerprint)
+			v.Suggest = n >= 3
+		}
+	case r.URL.Path == "/suppressions":
+		v.Page = "suppressions"
+		v.Suppressions, err = d.store.ListSuppressions(r.Context())
+	case r.URL.Path == "/suppressions/new":
+		if !v.CanWrite() {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		v.Page = "new-suppression"
+		if id := r.URL.Query().Get("incident"); id != "" {
+			var x store.Record
+			x, err = d.store.GetIncident(r.Context(), id)
+			v.Fingerprint = x.Fingerprint
+		}
+	case r.URL.Path == "/assets":
+		v.Page = "assets"
+		for _, x := range d.config.Assets {
+			v.Assets = append(v.Assets, x)
+		}
+		sort.Slice(v.Assets, func(i, j int) bool { return v.Assets[i].IP < v.Assets[j].IP })
+	case r.URL.Path == "/stats":
+		if v.Range != "" && !auth.Allowed(v.Range, "all", "24h", "7d") {
+			http.Error(w, "invalid range", http.StatusBadRequest)
+			return
+		}
+		err = d.stats(r, &v)
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		http.Error(w, "storage error", http.StatusInternalServerError)
+		return
+	}
+	d.render(w, r, v)
 }
+func (d *dashboard) render(w http.ResponseWriter, r *http.Request, v viewModel) {
+	var b bytes.Buffer
+	if err := screen(v).Render(r.Context(), &b); err != nil {
+		http.Error(w, "could not render page", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(b.Bytes())
+}
+func (d *dashboard) createSuppression(w http.ResponseWriter, r *http.Request, v viewModel) {
+	m := rules.Match{Fingerprint: strings.TrimSpace(r.PostForm.Get("fingerprint")), RuleID: strings.TrimSpace(r.PostForm.Get("rule_id")), SrcIP: strings.TrimSpace(r.PostForm.Get("src_ip")), AgentID: strings.TrimSpace(r.PostForm.Get("agent_id")), Description: strings.TrimSpace(r.PostForm.Get("description"))}
+	if groups := r.PostForm.Get("groups"); strings.TrimSpace(groups) != "" {
+		for _, g := range strings.Split(groups, ",") {
+			m.Groups = append(m.Groups, strings.TrimSpace(g))
+		}
+	}
+	action, reason, expires := r.PostForm.Get("action"), strings.TrimSpace(r.PostForm.Get("reason")), strings.TrimSpace(r.PostForm.Get("expires_at"))
+	err := rules.ValidateInput(m, action, reason)
+	if expires != "" && err == nil {
+		t, e := time.Parse(time.RFC3339, expires)
+		if e != nil || !t.After(time.Now()) {
+			err = fmt.Errorf("expiration must be a future RFC3339 timestamp")
+		}
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	b, _ := json.Marshal(m)
+	if _, err = d.store.CreateSuppressionWithMatch(r.Context(), "", string(b), action, reason, expires, v.Who.Actor); err != nil {
+		http.Error(w, "could not save suppression", http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/suppressions", http.StatusSeeOther)
+}
+func (d *dashboard) stats(r *http.Request, v *viewModel) error {
+	v.Page = "stats"
+	since := ""
+	switch v.Range {
+	case "24h":
+		since = time.Now().UTC().Add(-24 * time.Hour).Format(time.RFC3339Nano)
+	case "7d":
+		since = time.Now().UTC().Add(-7 * 24 * time.Hour).Format(time.RFC3339Nano)
+	case "", "all":
+		v.Range = "all"
+	default:
+		return fmt.Errorf("invalid range")
+	}
+	rows, err := d.store.ListIncidentsFiltered(r.Context(), "", since, 0)
+	if err != nil {
+		return err
+	}
+	v.Total = len(rows)
+	v.Metrics, err = d.store.Metrics(r.Context())
+	if err != nil {
+		return err
+	}
+	counts, srcIPs, tactics := map[string]int{}, map[string]int{}, map[string]int{}
+	for _, row := range rows {
+		counts[row.Severity]++
+		var x struct {
+			SrcIP        string   `json:"src_ip"`
+			MITRETactics []string `json:"mitre_tactics"`
+		}
+		if json.Unmarshal(row.Payload, &x) == nil {
+			if x.SrcIP != "" {
+				srcIPs[x.SrcIP]++
+			}
+			for _, t := range x.MITRETactics {
+				tactics[t]++
+			}
+		}
+	}
+	for _, name := range []string{"critical", "high", "medium", "low"} {
+		v.Counts = append(v.Counts, countItem{name, counts[name]})
+	}
+	v.TopSrcIP = topCounts(srcIPs, 10)
+	v.TopMITRE = topCounts(tactics, 10)
+	if total := v.Metrics.FeedbackTP + v.Metrics.FeedbackFP; total > 0 {
+		v.FPPercent = float64(v.Metrics.FeedbackFP) * 100 / float64(total)
+	}
+	return nil
+}
+
+// Safe URLs are constructed only from fixed routes and percent-encoded IDs.
+func safe(path string) templ.SafeURL { return templ.SafeURL(path) }
