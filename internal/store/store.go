@@ -190,11 +190,11 @@ type LLMTrace struct {
 }
 
 type MetricsSnapshot struct {
-	LLMCalls, LLMUsed, LLMErrors        int
-	LLMLatencyMS                        float64
-	FeedbackTP, FeedbackFP, FeedbackAck int
-	OutboxPending, OutboxSent           int
-	MTTASeconds                         float64
+	LLMCalls, LLMUsed, LLMErrors            int
+	LLMLatencyMS                            float64
+	FeedbackTP, FeedbackFP, FeedbackAck     int
+	OutboxPending, OutboxSent, OutboxFailed int
+	MTTASeconds                             float64
 }
 
 func (s *Store) Metrics(ctx context.Context) (MetricsSnapshot, error) {
@@ -225,7 +225,7 @@ func (s *Store) Metrics(ctx context.Context) (MetricsSnapshot, error) {
 	if err := rows.Err(); err != nil {
 		return m, err
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END),0) FROM outbox`).Scan(&m.OutboxPending, &m.OutboxSent); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END),0),COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END),0) FROM outbox`).Scan(&m.OutboxPending, &m.OutboxSent, &m.OutboxFailed); err != nil {
 		return m, err
 	}
 	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(AVG((julianday(f.created_at)-julianday(i.first_seen))*86400),0) FROM feedback f JOIN incidents i ON i.id=f.incident_id WHERE f.verdict IN ('tp','fp')`).Scan(&m.MTTASeconds); err != nil {
@@ -249,7 +249,10 @@ func (s *Store) LoadCursor(ctx context.Context, source string) (Cursor, error) {
 	if err != nil {
 		return c, err
 	}
-	c.Timestamp, _ = time.Parse(time.RFC3339Nano, ts)
+	c.Timestamp, err = time.Parse(time.RFC3339Nano, ts)
+	if err != nil {
+		return Cursor{}, fmt.Errorf("invalid stored source timestamp: %w", err)
+	}
 	return c, nil
 }
 func (s *Store) SaveCursor(ctx context.Context, source string, c Cursor) error {
@@ -265,6 +268,7 @@ type OutboxItem struct {
 	Status              string
 	NextAttemptAt       time.Time
 	LastError           string
+	CreatedAt           time.Time
 }
 
 func (s *Store) Enqueue(ctx context.Context, incidentID, channel string, payload []byte) error {
@@ -272,10 +276,16 @@ func (s *Store) Enqueue(ctx context.Context, incidentID, channel string, payload
 	return err
 }
 func (s *Store) PendingOutbox(ctx context.Context, limit int) ([]OutboxItem, error) {
+	return s.PendingOutboxAt(ctx, limit, time.Now())
+}
+
+func (s *Store) PendingOutboxAt(ctx context.Context, limit int, now time.Time) ([]OutboxItem, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, e := s.db.QueryContext(ctx, `SELECT id,incident_id,channel,payload,status,attempts,next_attempt_at,last_error FROM outbox WHERE status='pending' AND next_attempt_at<=? ORDER BY id LIMIT ?`, time.Now().UTC().Format(time.RFC3339Nano), limit)
+	// RFC3339Nano strings with optional fractional digits are not ordered
+	// chronologically as text; compare dates rather than their string encoding.
+	rows, e := s.db.QueryContext(ctx, `SELECT id,incident_id,channel,payload,status,attempts,next_attempt_at,last_error,created_at FROM outbox WHERE status='pending' AND julianday(next_attempt_at)<=julianday(?) ORDER BY id LIMIT ?`, now.UTC().Format(time.RFC3339Nano), limit)
 	if e != nil {
 		return nil, e
 	}
@@ -283,11 +293,18 @@ func (s *Store) PendingOutbox(ctx context.Context, limit int) ([]OutboxItem, err
 	var out []OutboxItem
 	for rows.Next() {
 		var x OutboxItem
-		var ts string
-		if e = rows.Scan(&x.ID, &x.IncidentID, &x.Channel, &x.Payload, &x.Status, &x.Attempts, &ts, &x.LastError); e != nil {
+		var ts, created string
+		if e = rows.Scan(&x.ID, &x.IncidentID, &x.Channel, &x.Payload, &x.Status, &x.Attempts, &ts, &x.LastError, &created); e != nil {
 			return nil, e
 		}
-		x.NextAttemptAt, _ = time.Parse(time.RFC3339Nano, ts)
+		x.NextAttemptAt, e = time.Parse(time.RFC3339Nano, ts)
+		if e != nil {
+			return nil, e
+		}
+		x.CreatedAt, e = time.Parse(time.RFC3339Nano, created)
+		if e != nil {
+			return nil, e
+		}
 		out = append(out, x)
 	}
 	return out, rows.Err()
@@ -297,8 +314,40 @@ func (s *Store) MarkOutbox(ctx context.Context, id int64, success bool, next tim
 	if success {
 		status = "sent"
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE outbox SET status=?,attempts=attempts+1,next_attempt_at=?,last_error=? WHERE id=?`, status, next.UTC().Format(time.RFC3339Nano), lastError, id)
+	return s.RecordOutboxAttempt(ctx, id, status, next, lastError)
+}
+
+func (s *Store) RecordOutboxAttempt(ctx context.Context, id int64, status string, next time.Time, lastError string) error {
+	if status != "pending" && status != "sent" && status != "failed" {
+		return fmt.Errorf("invalid outbox status")
+	}
+	r, err := s.db.ExecContext(ctx, `UPDATE outbox SET status=?,attempts=attempts+1,next_attempt_at=?,last_error=? WHERE id=? AND status='pending'`, status, next.UTC().Format(time.RFC3339Nano), lastError, id)
+	return requireOutboxUpdate(r, err)
+}
+
+func (s *Store) ExpireOutbox(ctx context.Context, id int64, reason string) error {
+	r, err := s.db.ExecContext(ctx, `UPDATE outbox SET status='failed',last_error=? WHERE id=? AND status='pending'`, reason, id)
+	return requireOutboxUpdate(r, err)
+}
+
+func (s *Store) ExpireOutboxBefore(ctx context.Context, before time.Time) error {
+	// Also expire legacy items deferred far into the future by older versions.
+	_, err := s.db.ExecContext(ctx, `UPDATE outbox SET status='failed',last_error='notification retry window exceeded: ' || last_error WHERE status='pending' AND julianday(created_at)<=julianday(?)`, before.UTC().Format(time.RFC3339Nano))
 	return err
+}
+
+func requireOutboxUpdate(result sql.Result, err error) error {
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return fmt.Errorf("outbox item is missing or no longer pending")
+	}
+	return nil
 }
 
 func (s *Store) SaveLLMTrace(ctx context.Context, t LLMTrace) error {

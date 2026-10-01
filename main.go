@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -605,6 +606,7 @@ func serve(args []string) {
 	sourceUser := fs.String("source-user", "", "source basic-auth username")
 	sourcePasswordEnv := fs.String("source-password-env", "", "environment variable containing source password")
 	sourceInterval := fs.Duration("source-interval", 15*time.Second, "source polling interval")
+	sourceTieBreaker := fs.String("source-tiebreaker", "id", "unique source field with doc_values, not _id")
 	webhookURL := fs.String("webhook-url", "", "optional notification webhook URL")
 	tlsCert := fs.String("tls-cert", "", "TLS certificate path")
 	tlsKey := fs.String("tls-key", "", "TLS private key path")
@@ -615,6 +617,9 @@ func serve(args []string) {
 	}
 	if *configPath != "" && *dbPath == "data/triage.db" {
 		*dbPath = cfg.Storage.Path
+	}
+	if err := os.MkdirAll(filepath.Dir(*dbPath), 0700); err != nil {
+		panic(err)
 	}
 	db, err := store.Open(*dbPath)
 	if err != nil {
@@ -794,7 +799,7 @@ func serve(args []string) {
 			"mtta_seconds": m.MTTASeconds,
 			"feedback":     map[string]any{"tp": m.FeedbackTP, "fp": m.FeedbackFP, "ack": m.FeedbackAck, "fp_rate": fpRate},
 			"llm":          map[string]any{"calls": m.LLMCalls, "used": m.LLMUsed, "errors": m.LLMErrors, "avg_latency_ms": m.LLMLatencyMS},
-			"outbox":       map[string]any{"pending": m.OutboxPending, "sent": m.OutboxSent},
+			"outbox":       map[string]any{"pending": m.OutboxPending, "sent": m.OutboxSent, "failed": m.OutboxFailed},
 		})
 	})))
 	http.Handle("/api/assets", protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -928,15 +933,27 @@ func serve(args []string) {
 		slackCallback = slackSignatureAuth(slackCallback, slackSigningSecret)
 	}
 	http.Handle("/api/integrations/slack/callback", slackCallback)
-	serveCtx, cancelServe := context.WithCancel(context.Background())
-	defer cancelServe()
+	serveCtx, cancelServe := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	var workers sync.WaitGroup
+	startWorker := func(run func()) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			run()
+		}()
+	}
+	// Workers must stop before deferred GeoIP/database closes run.
+	defer func() {
+		cancelServe()
+		workers.Wait()
+	}()
 	prune := func() {
-		if err := db.Prune(context.Background(), time.Now().UTC().Add(-cfg.Storage.Retention.Alerts), time.Now().UTC().Add(-cfg.Storage.Retention.LLMCalls)); err != nil {
+		if err := db.Prune(serveCtx, time.Now().UTC().Add(-cfg.Storage.Retention.Alerts), time.Now().UTC().Add(-cfg.Storage.Retention.LLMCalls)); err != nil && serveCtx.Err() == nil {
 			fmt.Fprintln(os.Stderr, "retention prune:", err)
 		}
 	}
 	prune()
-	go func() {
+	startWorker(func() {
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
 		for {
@@ -947,7 +964,21 @@ func serve(args []string) {
 				prune()
 			}
 		}
-	}()
+	})
+	var sender pipeline.Sender
+	senders := configuredNotificationSenders(cfg)
+	if *webhookURL != "" {
+		senders["webhook"] = notify.Webhook{URL: *webhookURL, Secret: webhookSecret}
+	}
+	if len(senders) > 0 {
+		sender = notify.Multi{Senders: senders}
+		startWorker(func() {
+			dispatcher := pipeline.Dispatcher{Store: db, Sender: sender, BaseDelay: time.Second, RetryWindow: 24 * time.Hour}
+			_ = dispatcher.Run(serveCtx, time.Second, 100, func(err error) {
+				fmt.Fprintln(os.Stderr, "notification delivery:", err)
+			}) // Cancellation is expected when the server shuts down.
+		})
+	}
 	if *sourceURL != "" {
 		if *sourceInterval <= 0 {
 			panic("source-interval must be positive")
@@ -956,32 +987,25 @@ func serve(args []string) {
 		if *sourcePasswordEnv != "" {
 			password = os.Getenv(*sourcePasswordEnv)
 		}
-		var sender pipeline.Sender
-		if *webhookURL != "" {
-			senders := map[string]notify.Sender{"webhook": notify.Webhook{URL: *webhookURL, Secret: webhookSecret}}
-			for channel, configured := range configuredNotificationSenders(cfg) {
-				senders[channel] = configured
-			}
-			sender = notify.Multi{Senders: senders}
-		} else if senders := configuredNotificationSenders(cfg); len(senders) > 0 {
-			sender = notify.Multi{Senders: senders}
-		}
-		go pollWazuh(serveCtx, db, ingest.WazuhClient{BaseURL: *sourceURL, Index: *sourceIndex, Username: *sourceUser, Password: password}, *sourceInterval, cfg.Correlation.Window, cfg.Correlation.MaxIncidentAge, cfg.Correlation.Grouping, cfg.Enrichment.InternalCIDRs, assets, iocs, geoip, engine, sender, cfg.Correlation.SuppressionsFile)
+		startWorker(func() {
+			pollWazuh(serveCtx, db, ingest.WazuhClient{BaseURL: *sourceURL, Index: *sourceIndex, Username: *sourceUser, Password: password, TieBreaker: *sourceTieBreaker}, *sourceInterval, cfg.Correlation.Window, cfg.Correlation.MaxIncidentAge, cfg.Correlation.Grouping, cfg.Enrichment.InternalCIDRs, assets, iocs, geoip, engine, sender, cfg.Correlation.SuppressionsFile)
+		})
 	}
 	fmt.Println("listening on", *addr)
 	if (*tlsCert == "") != (*tlsKey == "") {
 		panic("tls-cert and tls-key must be provided together")
 	}
-	server := &http.Server{Addr: *addr}
-	shutdown := make(chan os.Signal, 1)
-	signal.Notify(shutdown, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(shutdown)
+	server := &http.Server{Addr: *addr, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute}
+	shutdownDone := make(chan struct{})
 	go func() {
-		<-shutdown
-		cancelServe()
+		defer close(shutdownDone)
+		<-serveCtx.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = server.Shutdown(ctx)
+		if err := server.Shutdown(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "server shutdown:", err)
+			_ = server.Close()
+		}
 	}()
 	var e error
 	if *tlsCert != "" {
@@ -989,6 +1013,8 @@ func serve(args []string) {
 	} else {
 		e = server.ListenAndServe()
 	}
+	cancelServe()
+	<-shutdownDone
 	if e != nil && !errors.Is(e, http.ErrServerClosed) {
 		panic(e)
 	}
@@ -1062,138 +1088,18 @@ func configuredEngine(cfg config.Config) *triageengine.Engine {
 }
 
 func pollWazuh(ctx context.Context, db *store.Store, source ingest.WazuhClient, interval, correlationWindow, maxIncidentAge time.Duration, grouping config.Grouping, internalCIDRs []string, assets map[string]enrich.Asset, iocs enrich.IOC, geoip *enrich.GeoIP, engine *triageengine.Engine, sender pipeline.Sender, suppressionFile string) {
-	const sourceName = "wazuh-live"
-	saved, err := db.LoadCursor(ctx, sourceName)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "source cursor:", err)
-		return
-	}
-	cur := ingest.Cursor{Timestamp: saved.Timestamp}
-	if len(saved.SortJSON) > 0 {
-		_ = json.Unmarshal(saved.SortJSON, &cur.Sort)
+	worker := pipeline.Worker{
+		SourceName: "wazuh-live", Source: source, Store: db,
+		PageProcessor: liveProcessor{
+			db: db, correlationWindow: correlationWindow, maxIncidentAge: maxIncidentAge,
+			grouping: grouping, internalCIDRs: internalCIDRs, assets: assets, iocs: iocs,
+			geoip: geoip, engine: engine, sender: sender, suppressionFile: suppressionFile,
+		},
 	}
 	poll := func() {
-		hits, next, err := source.Search(ctx, cur)
-		if err != nil {
+		if _, err := worker.Poll(ctx); err != nil && ctx.Err() == nil {
 			fmt.Fprintln(os.Stderr, "source poll:", err)
-			return
 		}
-		suppressions, _ := liveSuppressions(ctx, db, suppressionFile)
-		accepted := make([]Alert, 0, len(hits))
-		for _, hit := range hits {
-			payload := ingest.NormalizeHit(hit)
-			var alert Alert
-			encoded, _ := json.Marshal(payload)
-			if err := json.Unmarshal(encoded, &alert); err == nil {
-				alert.Internal = enrich.IsInternal(alert.SrcIP, internalCIDRs)
-				agentID, _ := alert.Agent["id"].(string)
-				fingerprint := alertFingerprint(alert, grouping)
-				decision := rules.Evaluate(rules.Alert{RuleID: alert.RuleID, RuleDesc: alert.RuleDesc, SrcIP: alert.SrcIP, Groups: alert.Groups, AgentID: agentID, Fingerprint: fingerprint}, suppressions, time.Now().UTC())
-				if decision.Suppressed {
-					continue
-				}
-				if decision.Downgrade && alert.RuleLevel > 3 {
-					alert.RuleLevel = 3
-				}
-				alert.Tag = decision.Tag
-				adjusted, _ := json.Marshal(alert)
-				_ = json.Unmarshal(adjusted, &payload)
-			}
-			encoded, _ = json.Marshal(payload)
-			if err := json.Unmarshal(encoded, &alert); err == nil {
-				if asset, ok := enrich.Apply(assets, alert.SrcIP); ok {
-					alert.Criticality = asset.Criticality
-				}
-				alert.Malicious = iocs.MaliciousIP(alert.SrcIP)
-				adjusted, _ := json.Marshal(alert)
-				_ = json.Unmarshal(adjusted, &payload)
-				if err := db.SaveAlert(ctx, hit.ID, "wazuh", hit.Timestamp, payload); err != nil {
-					fmt.Fprintln(os.Stderr, "save alert:", err)
-					return
-				}
-				accepted = append(accepted, alert)
-			} else if err := db.SaveAlert(ctx, hit.ID, "wazuh", hit.Timestamp, payload); err != nil {
-				fmt.Fprintln(os.Stderr, "save alert:", err)
-				return
-			}
-		}
-		for _, incident := range groupWithWindowConfig(accepted, correlationWindow, maxIncidentAge, grouping) {
-			id := incident.Fingerprint + "/" + incident.FirstSeen.Format(time.RFC3339Nano)
-			if previous, lookupErr := db.LatestIncidentByFingerprint(ctx, incident.Fingerprint); lookupErr == nil {
-				oldFirst, _ := time.Parse(time.RFC3339Nano, previous.FirstSeen)
-				oldLast, _ := time.Parse(time.RFC3339Nano, previous.LastSeen)
-				if !oldLast.IsZero() && !incident.FirstSeen.Before(oldLast) && incident.FirstSeen.Sub(oldLast) <= correlationWindow && incident.LastSeen.Sub(oldFirst) <= maxIncidentAge {
-					incident.FirstSeen = oldFirst
-					incident.AlertCount += previous.AlertCount
-					if previous.Score > incident.Score {
-						incident.Score = previous.Score
-					}
-					incident.Severity = scoring.Severity(incident.Score)
-					id = previous.ID
-				}
-			}
-			if engine != nil {
-				historyRows, historyErr := db.IncidentHistoryByContext(ctx, incident.AgentID, incident.SrcIP, 5)
-				if historyErr == nil && len(historyRows) == 0 {
-					historyRows, historyErr = db.IncidentHistory(ctx, incident.Fingerprint, 5)
-				}
-				if historyErr != nil {
-					fmt.Fprintln(os.Stderr, "incident history:", historyErr)
-					return
-				}
-				historyParts := make([]string, 0, len(historyRows))
-				for _, h := range historyRows {
-					historyParts = append(historyParts, h.LastSeen+":"+h.Severity+":"+h.Verdict)
-				}
-				parts := strings.Split(incident.Fingerprint, "|")
-				sourceIP := ""
-				if len(parts) > 0 {
-					sourceIP = parts[len(parts)-1]
-				}
-				geo := ""
-				if geoip != nil {
-					if country, geoErr := geoip.Lookup(sourceIP); geoErr == nil {
-						geo = country
-					}
-				}
-				result := engine.Analyze(ctx, triageengine.Case{
-					Rule:         scoring.Input{RuleLevel: incident.RuleLevel, Malicious: incident.Malicious, Criticality: incident.Criticality, HighImpactTactic: incident.HighImpactTactic, InternalWhitelist: incident.Internal},
-					RuleSeverity: incident.Severity,
-					Prompt:       llm.PromptInput{Rule: incident.Fingerprint, Description: "live correlated SIEM incident", SourceIP: sourceIP, Geo: geo, History: strings.Join(historyParts, "; ")},
-				})
-				incident.Score = result.Score
-				incident.Severity = result.Severity
-				incident.Summary = result.Summary
-				incident.Actions = result.Actions
-				incident.FPProbability = result.FPProbability
-				_ = db.SaveLLMTrace(ctx, store.LLMTrace{IncidentID: id, Provider: result.Trace.Provider, Model: result.Trace.Model, PromptHash: result.Trace.PromptHash, LatencyMS: result.Trace.LatencyMS, Used: result.Trace.Used, Error: result.Trace.Error})
-			}
-			if err := db.SaveIncident(ctx, incident, id, incident.Fingerprint, incident.Severity, incident.Score, incident.AlertCount, incident.FirstSeen, incident.LastSeen); err != nil {
-				fmt.Fprintln(os.Stderr, "save incident:", err)
-				return
-			}
-			if sender != nil {
-				payload, _ := json.Marshal(incident)
-				channels := []string{"webhook"}
-				if fanout, ok := sender.(interface{ Channels() []string }); ok {
-					channels = fanout.Channels()
-				}
-				for _, channel := range channels {
-					if err := db.Enqueue(ctx, id, channel, payload); err != nil {
-						fmt.Fprintln(os.Stderr, "enqueue notification:", err)
-					}
-				}
-			}
-		}
-		if sender != nil {
-			_, _ = (pipeline.Dispatcher{Store: db, Sender: sender, BaseDelay: time.Second, MaxAttempts: 10}).Dispatch(ctx, 100)
-		}
-		b, _ := json.Marshal(next.Sort)
-		if err := db.SaveCursor(ctx, sourceName, store.Cursor{Timestamp: next.Timestamp, SortJSON: b}); err != nil {
-			fmt.Fprintln(os.Stderr, "save cursor:", err)
-			return
-		}
-		cur = next
 	}
 	poll()
 	ticker := time.NewTicker(interval)
@@ -1225,13 +1131,16 @@ func liveSuppressions(ctx context.Context, db *store.Store, path string) ([]rule
 		var expires *time.Time
 		if row.ExpiresAt != "" {
 			t, parseErr := time.Parse(time.RFC3339Nano, row.ExpiresAt)
-			if parseErr == nil {
-				expires = &t
+			if parseErr != nil {
+				return nil, fmt.Errorf("suppression %d has invalid expiry: %w", row.ID, parseErr)
 			}
+			expires = &t
 		}
 		match := rules.Match{Fingerprint: row.Fingerprint}
 		if row.MatchJSON != "" {
-			_ = json.Unmarshal([]byte(row.MatchJSON), &match)
+			if err := json.Unmarshal([]byte(row.MatchJSON), &match); err != nil {
+				return nil, fmt.Errorf("suppression %d has invalid match: %w", row.ID, err)
+			}
 		}
 		out = append(out, rules.Suppression{Match: match, Action: row.Action, Reason: row.Reason, CreatedBy: row.CreatedBy, ExpiresAt: expires})
 	}

@@ -21,6 +21,12 @@ func TestWazuhSearchAfterAndCursor(t *testing.T) {
 		if calls == 2 && q["search_after"] == nil {
 			t.Error("missing search_after")
 		}
+		if calls == 2 {
+			rangeQuery := q["query"].(map[string]any)["range"].(map[string]any)["@timestamp"].(map[string]any)
+			if rangeQuery["gte"] != "2026-09-23T08:01:00Z" {
+				t.Errorf("must retain equal-timestamp hits across pages: %v", rangeQuery)
+			}
+		}
 		w.Header().Set("content-type", "application/json")
 		_, _ = w.Write([]byte(`{"hits":{"hits":[{"_id":"a1","_source":{"@timestamp":"2026-09-23T08:00:00Z"},"sort":["2026-09-23T08:00:00Z","a1"]},{"_id":"a2","_source":{"@timestamp":"2026-09-23T08:01:00Z"},"sort":["2026-09-23T08:01:00Z","a2"]}]}}`))
 	}))

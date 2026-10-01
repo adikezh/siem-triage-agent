@@ -17,6 +17,7 @@ type WazuhClient struct {
 	InsecureSkipVerify                 bool
 	HTTPClient                         *http.Client
 	PageSize                           int
+	TieBreaker                         string // unique keyword/numeric field with doc_values
 }
 type Cursor struct {
 	Timestamp time.Time
@@ -43,11 +44,23 @@ func (c WazuhClient) Search(ctx context.Context, cursor Cursor) ([]Hit, Cursor, 
 	if size <= 0 {
 		size = 1000
 	}
-	q := map[string]any{"size": size, "sort": []string{"@timestamp", "_id"}, "query": map[string]any{"range": map[string]any{"@timestamp": map[string]string{"gt": cursor.Timestamp.UTC().Format(time.RFC3339Nano)}}}}
+	// search_after provides the exclusive tie-breaker. The timestamp bound must
+	// remain inclusive or the rest of a page's equal-timestamp hits are lost.
+	tieBreaker := c.TieBreaker
+	if tieBreaker == "" {
+		tieBreaker = "id"
+	}
+	if tieBreaker == "_id" {
+		return nil, cursor, fmt.Errorf("_id is not sortable; use a unique field with doc_values")
+	}
+	q := map[string]any{"size": size, "sort": []string{"@timestamp", tieBreaker}, "query": timestampQuery("@timestamp", cursor.Timestamp)}
 	if len(cursor.Sort) > 0 {
 		q["search_after"] = cursor.Sort
 	}
-	b, _ := json.Marshal(q)
+	b, e := json.Marshal(q)
+	if e != nil {
+		return nil, cursor, fmt.Errorf("encode search cursor: %w", e)
+	}
 	u := strings.TrimRight(c.BaseURL, "/") + "/" + url.PathEscape(c.Index) + "/_search"
 	r, e := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(b))
 	if e != nil {
@@ -66,6 +79,10 @@ func (c WazuhClient) Search(ctx context.Context, cursor Cursor) ([]Hit, Cursor, 
 		return nil, cursor, fmt.Errorf("wazuh HTTP %s", resp.Status)
 	}
 	var body struct {
+		TimedOut bool `json:"timed_out"`
+		Shards   struct {
+			Failed int `json:"failed"`
+		} `json:"_shards"`
 		Hits struct {
 			Hits []struct {
 				ID     string         `json:"_id"`
@@ -74,13 +91,21 @@ func (c WazuhClient) Search(ctx context.Context, cursor Cursor) ([]Hit, Cursor, 
 			} `json:"hits"`
 		} `json:"hits"`
 	}
-	if e = json.NewDecoder(resp.Body).Decode(&body); e != nil {
+	decoder := json.NewDecoder(resp.Body)
+	decoder.UseNumber()
+	if e = decoder.Decode(&body); e != nil {
 		return nil, cursor, e
+	}
+	if body.TimedOut || body.Shards.Failed > 0 {
+		return nil, cursor, fmt.Errorf("wazuh returned a partial search page")
 	}
 	out := make([]Hit, 0, len(body.Hits.Hits))
 	next := cursor
 	for _, h := range body.Hits.Hits {
 		ts := extractTime(h.Source)
+		if h.ID == "" || ts.IsZero() || len(h.Sort) != 2 || h.Sort[1] == nil {
+			return nil, cursor, fmt.Errorf("wazuh hit requires ID, timestamp and sort values")
+		}
 		out = append(out, Hit{ID: h.ID, Timestamp: ts, Source: h.Source, Sort: h.Sort})
 		if ts.After(next.Timestamp) {
 			next.Timestamp = ts

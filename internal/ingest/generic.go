@@ -19,6 +19,7 @@ type GenericClient struct {
 	InsecureSkipVerify                 bool
 	HTTPClient                         *http.Client
 	PageSize                           int
+	TieBreaker                         string
 	Mapping                            map[string]string // normalized name -> dotted source path
 }
 
@@ -37,11 +38,21 @@ func (c GenericClient) Search(ctx context.Context, cursor Cursor) ([]Hit, Cursor
 		size = 1000
 	}
 	timeField := c.field("timestamp", "@timestamp")
-	q := map[string]any{"size": size, "sort": []string{timeField, "_id"}, "query": map[string]any{"range": map[string]any{timeField: map[string]string{"gt": cursor.Timestamp.UTC().Format(time.RFC3339Nano)}}}}
+	tieBreaker := c.TieBreaker
+	if tieBreaker == "" {
+		tieBreaker = "id"
+	}
+	if tieBreaker == "_id" {
+		return nil, cursor, fmt.Errorf("_id is not sortable; use a unique field with doc_values")
+	}
+	q := map[string]any{"size": size, "sort": []string{timeField, tieBreaker}, "query": timestampQuery(timeField, cursor.Timestamp)}
 	if len(cursor.Sort) > 0 {
 		q["search_after"] = cursor.Sort
 	}
-	b, _ := json.Marshal(q)
+	b, err := json.Marshal(q)
+	if err != nil {
+		return nil, cursor, fmt.Errorf("encode search cursor: %w", err)
+	}
 	r, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.BaseURL, "/")+"/"+url.PathEscape(c.Index)+"/_search", bytes.NewReader(b))
 	if err != nil {
 		return nil, cursor, err
@@ -59,6 +70,10 @@ func (c GenericClient) Search(ctx context.Context, cursor Cursor) ([]Hit, Cursor
 		return nil, cursor, fmt.Errorf("generic search HTTP %s", resp.Status)
 	}
 	var body struct {
+		TimedOut bool `json:"timed_out"`
+		Shards   struct {
+			Failed int `json:"failed"`
+		} `json:"_shards"`
 		Hits struct {
 			Hits []struct {
 				ID     string         `json:"_id"`
@@ -67,13 +82,21 @@ func (c GenericClient) Search(ctx context.Context, cursor Cursor) ([]Hit, Cursor
 			} `json:"hits"`
 		} `json:"hits"`
 	}
-	if err = json.NewDecoder(resp.Body).Decode(&body); err != nil {
+	decoder := json.NewDecoder(resp.Body)
+	decoder.UseNumber()
+	if err = decoder.Decode(&body); err != nil {
 		return nil, cursor, err
+	}
+	if body.TimedOut || body.Shards.Failed > 0 {
+		return nil, cursor, fmt.Errorf("generic source returned a partial search page")
 	}
 	out := make([]Hit, 0, len(body.Hits.Hits))
 	next := cursor
 	for _, raw := range body.Hits.Hits {
 		ts := valueTime(raw.Source, c.field("timestamp", "@timestamp"))
+		if raw.ID == "" || ts.IsZero() || len(raw.Sort) != 2 || raw.Sort[1] == nil {
+			return nil, cursor, fmt.Errorf("generic hit requires ID, timestamp and sort values")
+		}
 		source := c.normalize(raw.Source)
 		out = append(out, Hit{ID: raw.ID, Timestamp: ts, Source: source, Sort: raw.Sort})
 		if ts.After(next.Timestamp) {

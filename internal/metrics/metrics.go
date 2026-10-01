@@ -32,6 +32,6 @@ func Handler(s *store.Store) http.Handler {
 		fmt.Fprintf(w, "triage_llm_calls_total %d\ntriage_llm_calls_used_total %d\ntriage_llm_errors_total %d\n", m.LLMCalls, m.LLMUsed, m.LLMErrors)
 		fmt.Fprintf(w, "triage_llm_latency_ms_avg %f\n", m.LLMLatencyMS)
 		fmt.Fprintf(w, "triage_feedback_total{verdict=\"tp\"} %d\ntriage_feedback_total{verdict=\"fp\"} %d\ntriage_feedback_total{verdict=\"ack\"} %d\n", m.FeedbackTP, m.FeedbackFP, m.FeedbackAck)
-		fmt.Fprintf(w, "triage_outbox_total{status=\"pending\"} %d\ntriage_outbox_total{status=\"sent\"} %d\n", m.OutboxPending, m.OutboxSent)
+		fmt.Fprintf(w, "triage_outbox_total{status=\"pending\"} %d\ntriage_outbox_total{status=\"sent\"} %d\ntriage_outbox_total{status=\"failed\"} %d\n", m.OutboxPending, m.OutboxSent, m.OutboxFailed)
 	})
 }
