@@ -125,8 +125,16 @@ func (s *Store) CreateAPIKey(ctx context.Context, name, role, raw string) (APIKe
 
 func (s *Store) HasAPIKeys(ctx context.Context) (bool, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_keys WHERE revoked_at IS NULL`).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_keys`).Scan(&n)
 	return n > 0, err
+}
+func (s *Store) LookupAPIKeyHash(ctx context.Context, hash string) (APIKeyRecord, bool, error) {
+	var key APIKeyRecord
+	err := s.db.QueryRowContext(ctx, `SELECT id,name,role,created_at FROM api_keys WHERE key_hash=? AND revoked_at IS NULL`, hash).Scan(&key.ID, &key.Name, &key.Role, &key.CreatedAt)
+	if err == sql.ErrNoRows {
+		return APIKeyRecord{}, false, nil
+	}
+	return key, err == nil, err
 }
 func (s *Store) VerifyAPIKey(ctx context.Context, raw string) (string, bool, error) {
 	var role string
@@ -400,11 +408,19 @@ func (s *Store) AddFeedback(ctx context.Context, incidentID, verdict, comment, a
 		actor = "anonymous"
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO feedback(incident_id,verdict,comment,actor,created_at) VALUES(?,?,?,?,?)`, incidentID, verdict, comment, actor, now)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	return s.appendAudit(ctx, "feedback.added", actor, map[string]string{"incident_id": incidentID, "verdict": verdict, "comment": comment})
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `INSERT INTO feedback(incident_id,verdict,comment,actor,created_at) VALUES(?,?,?,?,?)`, incidentID, verdict, comment, actor, now)
+	if err != nil {
+		return err
+	}
+	if err = appendAuditTx(ctx, tx, "feedback.added", actor, map[string]string{"incident_id": incidentID, "verdict": verdict, "comment": comment}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) CreateSuppression(ctx context.Context, fingerprint, action, reason, expiresAt, createdBy string) (SuppressionRecord, error) {
@@ -416,7 +432,12 @@ func (s *Store) CreateSuppressionWithMatch(ctx context.Context, fingerprint, mat
 		createdBy = "api"
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	r, err := s.db.ExecContext(ctx, `INSERT INTO suppressions(fingerprint,match_json,action,reason,expires_at,created_by,created_at) VALUES(?,?,?,?,?,?,?)`, fingerprint, matchJSON, action, reason, nullableText(expiresAt), createdBy, now)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return SuppressionRecord{}, err
+	}
+	defer tx.Rollback()
+	r, err := tx.ExecContext(ctx, `INSERT INTO suppressions(fingerprint,match_json,action,reason,expires_at,created_by,created_at) VALUES(?,?,?,?,?,?,?)`, fingerprint, matchJSON, action, reason, nullableText(expiresAt), createdBy, now)
 	if err != nil {
 		return SuppressionRecord{}, err
 	}
@@ -424,7 +445,10 @@ func (s *Store) CreateSuppressionWithMatch(ctx context.Context, fingerprint, mat
 	if err != nil {
 		return SuppressionRecord{}, err
 	}
-	if err = s.appendAudit(ctx, "suppression.created", createdBy, SuppressionRecord{ID: id, Fingerprint: fingerprint, MatchJSON: matchJSON, Action: action, Reason: reason, ExpiresAt: expiresAt, CreatedBy: createdBy, CreatedAt: now}); err != nil {
+	if err = appendAuditTx(ctx, tx, "suppression.created", createdBy, SuppressionRecord{ID: id, Fingerprint: fingerprint, MatchJSON: matchJSON, Action: action, Reason: reason, ExpiresAt: expiresAt, CreatedBy: createdBy, CreatedAt: now}); err != nil {
+		return SuppressionRecord{}, err
+	}
+	if err = tx.Commit(); err != nil {
 		return SuppressionRecord{}, err
 	}
 	return SuppressionRecord{ID: id, Fingerprint: fingerprint, MatchJSON: matchJSON, Action: action, Reason: reason, ExpiresAt: expiresAt, CreatedBy: createdBy, CreatedAt: now}, nil
@@ -448,20 +472,31 @@ func (s *Store) ListSuppressions(ctx context.Context) ([]SuppressionRecord, erro
 }
 
 func (s *Store) DeleteSuppression(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM suppressions WHERE id=?`, id)
+	return s.DeleteSuppressionBy(ctx, id, "api")
+}
+func (s *Store) DeleteSuppressionBy(ctx context.Context, id int64, actor string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	return s.appendAudit(ctx, "suppression.deleted", "api", map[string]any{"id": id})
+	defer tx.Rollback()
+	_, err = tx.ExecContext(ctx, `DELETE FROM suppressions WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	if err = appendAuditTx(ctx, tx, "suppression.deleted", actor, map[string]any{"id": id}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
-func (s *Store) appendAudit(ctx context.Context, event, actor string, payload any) error {
+func appendAuditTx(ctx context.Context, tx *sql.Tx, event, actor string, payload any) error {
 	b, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 	var prev string
-	if err = s.db.QueryRowContext(ctx, `SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1`).Scan(&prev); err == sql.ErrNoRows {
+	if err = tx.QueryRowContext(ctx, `SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1`).Scan(&prev); err == sql.ErrNoRows {
 		err = nil
 	}
 	if err != nil {
@@ -470,7 +505,7 @@ func (s *Store) appendAudit(ctx context.Context, event, actor string, payload an
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	sum := sha256.Sum256([]byte(prev + "\n" + event + "\n" + actor + "\n" + string(b) + "\n" + now))
 	hash := hex.EncodeToString(sum[:])
-	_, err = s.db.ExecContext(ctx, `INSERT INTO audit_log(event,actor,payload,prev_hash,hash,created_at) VALUES(?,?,?,?,?,?)`, event, actor, string(b), prev, hash, now)
+	_, err = tx.ExecContext(ctx, `INSERT INTO audit_log(event,actor,payload,prev_hash,hash,created_at) VALUES(?,?,?,?,?,?)`, event, actor, string(b), prev, hash, now)
 	return err
 }
 
