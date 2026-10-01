@@ -83,7 +83,7 @@ idempotency/update semantics still need verification.
 See TODO.md. Open items include the complete normalized/raw model and incident
 timeline, configuration-driven generic runtime/scoring, prompt-template and
 PII-mapping persistence, durable LLM budget/token accounting and warnings,
-real provider API semantics, complete UI feedback/suppression/RBAC flows,
+real provider API semantics, alert timeline and complete enrichment views,
 and Pro PostgreSQL/OIDC/regulatory templates. They are code work, not merely
 missing credentials. Multi-tenancy is a post-v1 roadmap item in the TZ, not
 a v1 acceptance gate.
@@ -94,3 +94,38 @@ Representative customer-source data and hardware, real notification/provider
 credentials, operational deployment/backup-restore evidence, and a SOC
 demonstration with recorded analyst feedback remain external evidence.
 Repository tests alone do not close those gates.
+
+## Browser workflow verified on 2026-10-02
+
+Browser checks used an isolated local fixture with separate synthetic viewer
+and analyst keys; automated HTTP tests additionally cover admin. The browser
+opened a slash-containing incident ID, submitted
+three FP verdicts, followed the resulting suggestion and saved a prefilled
+suppression with the authenticated analyst as its author. EN, RU and KK labels
+were checked. At a 390-pixel viewport the detail page fit the viewport and the
+viewer had no mutation controls. Admin deletion and direct forbidden writes
+are covered by automated HTTP tests, not claimed as manual browser deletion.
+
+The UI uses templ, htmx and compiled Tailwind CSS embedded in the Go binary;
+ordinary builds need no Node runtime or CDN. CI regenerates the committed
+templates/assets and checks for a diff. htmx evaluation, embedded script
+execution and local history storage are disabled.
+
+Authentication is rechecked on every request. Creating a first key protects
+existing handlers; revoking the last key does not restore demo mode. Browser
+sessions contain only an opaque identifier, expire after eight hours, are
+invalidated by logout/server restart, and resolve the current key role and
+revocation state from the database. Tests cover CSRF, Origin checks, cookie
+flags, session capacity, proxy HTTPS origins and failed authentication storage.
+
+Viewer can read; analyst/admin can give feedback and create suppressions;
+only admin can delete them. The server derives audit identity from the key.
+Feedback and rule writes commit with their audit record or roll back together;
+injected audit failures and concurrent hash-chain writers are tested. A rule
+requires a nonempty match and reason, valid regex/CIDR/glob and a valid future
+expiration when supplied. Dashboard incident windows are 24h/7d/all-time;
+feedback, MTTA and delivery totals are explicitly all-time, not windowed values.
+
+Alert timeline, full enrichment presentation and persisted token consumption
+remain implementation work. This browser slice is not v1.0 acceptance, a
+penetration test, or evidence of a real SOC/customer deployment.

@@ -4,6 +4,8 @@ Core is licensed under Apache-2.0. See [LICENSE](LICENSE).
 
 Community core: NDJSON ingest, deduplication, 15-minute correlation, deterministic scoring, CLI, health API and a non-root container.
 
+![Analyst console with synthetic demonstration data](docs/images/analyst-workbench.jpg)
+
 ## Architecture
 
 ```mermaid
@@ -52,4 +54,39 @@ For a repeatable local performance check, run `task benchmark` (or the equivalen
 
 If host port 8080 is occupied, use `TRIAGE_PORT=18080 docker compose up --build` (PowerShell: `$env:TRIAGE_PORT=18080; docker compose up --build`).
 
-The server also serves a small HTML dashboard at `/`, with `/stats`, `/assets` and `/suppressions` views, OpenAPI JSON at `/openapi.json`, and Prometheus metrics at `/metrics`. API endpoints are `GET /health`, `GET /api/incidents` (optional `severity`, `since`, `limit` filters), `GET /api/incidents/{id}`, `GET /api/stats`, `GET /api/assets`, `POST /api/incidents/feedback`, and suppression CRUD under `/api/suppressions`. Suppression POST accepts either a legacy `fingerprint` or a structured `match` (`rule_id`, `src_ip` CIDR/glob, `description` regex, `groups`, `agent_id`). Protected API routes have a per-client rate limit. Telegram and Slack callbacks are accepted at `/api/integrations/telegram/callback` and `/api/integrations/slack/callback`; set `--webhook-secret-env TRIAGE_WEBHOOK_SECRET` for the shared-secret demo path, or set `--slack-signing-secret-env SLACK_SIGNING_SECRET` to enforce Slack's native timestamped HMAC signature. Set `--source-url` to enable continuous Wazuh/OpenSearch polling (with `--source-index`, optional basic auth flags, and a persistent SQLite cursor); add `--webhook-url` for the generic HMAC channel. Additional Telegram, Slack, IRIS, TheHive and Jira channels can be enabled under `notify:` in YAML; each gets its own idempotent outbox record and retry lifecycle. Set `--api-key-env TRIAGE_API_KEY` for an environment key and `--api-key-role viewer|analyst|admin` to scope it, or create a database key with `triage apikey create`; once an active DB key exists, protected API routes require `Authorization: Bearer ...`. Health and metrics remain public for probes. For TLS, pass both `--tls-cert` and `--tls-key`.
+The server serves an analyst console at `/`, with incident detail, TP/FP/Ack feedback, suppression creation/deletion, assets and dashboard views. Templates and CSS/JavaScript are embedded; the runtime needs neither Node nor a CDN. See [acceptance evidence](docs/acceptance.md) and [remaining work](TODO.md) for the full TZ boundary.
+
+## Browser access and roles
+
+Create a key with `triage apikey create --db data/triage.db --name analyst --role analyst`, then run `triage serve --db data/triage.db`. Open the server URL and enter the issued key on the login page. Treat this one-time key output as a secret; do not commit it. An environment key is also supported with `--api-key-env TRIAGE_API_KEY --api-key-role viewer|analyst|admin`.
+
+Without configured keys the server is an explicitly labelled, open demo. Configure a key and TLS before exposing it outside a trusted local environment. Once a DB key has existed, revoking every key leaves authentication required; create or rotate a key using the CLI to regain access. Browser sessions expire after eight hours and on logout/restart. API clients still use `Authorization: Bearer ...`; browser cookies do not authenticate API calls.
+
+| Role | Read incidents and rules | Submit verdict or create rule | Delete rule |
+| --- | --- | --- | --- |
+| viewer | Yes | No | No |
+| analyst | Yes | Yes | No |
+| admin | Yes | Yes | Yes |
+
+UI language defaults to `triage.language` (en/ru/kk; kz is an alias). EN/RU/ҚАЗ links select a browser preference. Dashboard filters apply to incident counts and top sources/tactics; feedback, MTTA and delivery metrics remain clearly labelled all-time.
+
+Use built-in TLS with both `--tls-cert` and `--tls-key`. Behind a TLS-terminating proxy set `--web-public-url https://triage.example.com` and restrict direct backend access. This explicit origin controls CSRF checks and Secure cookies; forwarded headers are not trusted to choose it. Health, metrics and OpenAPI remain public; restrict them at the deployment boundary when appropriate.
+
+## API and integrations
+
+API endpoints include `GET /api/incidents` (severity/since/limit), `GET /api/incidents/{id}`, `GET /api/stats`, `GET /api/assets`, `POST /api/incidents/feedback`, and suppression CRUD under `/api/suppressions`. Percent-encode composite incident IDs as a single path segment. Suppression POST accepts a legacy `fingerprint` or structured `match` (rule_id, src_ip CIDR/glob, description regex, groups, agent_id), plus action, reason and optional future RFC3339 `expires_at`. Actor/created_by values supplied by a client cannot override the authenticated audit identity. API/UI requests have bounded per-client rate limiting.
+
+Telegram/Slack callbacks use `/api/integrations/telegram/callback` and `/api/integrations/slack/callback`. Configure `--webhook-secret-env TRIAGE_WEBHOOK_SECRET`, or `--slack-signing-secret-env SLACK_SIGNING_SECRET` for Slack signature verification. Continuous Wazuh/OpenSearch polling uses `--source-url`, `--source-index`, basic-auth environment flags and a persistent cursor; `--webhook-url` enables generic HMAC delivery. Telegram, Slack, IRIS, TheHive and Jira channels are configurable under `notify:` and use separate durable outbox records. Real vendor/customer acceptance is still pending.
+
+## Rebuilding the interface
+
+Checked-in generated templates and assets allow `go build` or Docker builds without frontend tools. After editing UI sources, run `task ui`, or:
+
+```sh
+npm ci --ignore-scripts
+npm run vendor:htmx
+npm run build:css
+go run github.com/a-h/templ/cmd/templ@v0.3.1020 generate -path internal/web
+```
+
+The module requires Go 1.25 or newer; CI/container builds use Go 1.26.

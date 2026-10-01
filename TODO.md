@@ -9,7 +9,7 @@
 - [~] Correlation uses map-based fingerprint grouping and O(n log n) timestamp ordering; the current local 100k-alert benchmark is 97.9 ms on Windows amd64 (Intel Ultra 5 225H), while the exact 500 alerts/s ingest target still needs a representative production dataset and hosted hardware proof.
 - [~] PII redaction, language-aware RU/EN/KK prompt builder, OpenAI-compatible/Ollama/Anthropic providers, strict output/action validation, configured provider fallback, in-memory budget guard, triage merge engine, checked-in prompt examples (runtime template loading still pending), config-selected providers, offline and live runtime paths, and LLM trace persistence are present.
 - [~] Generic HMAC webhook, Telegram Bot API, Slack Block Kit, Jira REST, IRIS and TheHive senders are configuration-wired through a multi-channel idempotent outbox with retry; Wazuh fields and Telegram/Slack callbacks are tested, including native signature verification and TP/FP/Ack/Open button cards. Provider-specific production credentials and endpoint behavior remain deployment gates.
-- [~] Optional API-key Bearer authentication supports scoped env keys and hashed SQLite keys with create/list/revoke/rotate CLI lifecycle; viewer/analyst/admin roles are enforced on read, feedback, suppression create and suppression delete routes, API and dashboard support severity/since/limit filters, operational stats expose FP rate/MTTA/top source IPs/MITRE tactics/LLM/outbox aggregates, and server-rendered dashboard, configured assets and suppression pages are exposed read-only. Protected APIs have per-client rate limiting. Markdown/PDF/DOCX reports work with day/week/month aliases; broader RBAC policy remains.
+- [~] API and browser authentication use hashed DB keys or a scoped environment key. Browser login, TP/FP/Ack forms, fingerprint-prefilled suppression suggestions, create/delete forms, server-side viewer/analyst/admin enforcement and atomic mutation/audit writes are implemented. The embedded templ/htmx/Tailwind UI has EN/RU/KK labels, severity/since/limit filters and 24h/7d/all-time incident dashboards. FP rate/MTTA/LLM/outbox aggregates are labelled all-time; token accounting and alert timeline remain open. Markdown/PDF/DOCX reports work with day/week/month aliases.
 - [~] Hosted CI (tests, vet, build, golangci-lint, Helm lint, govulncheck, SBOM), Docker build, Compose writable SQLite volume, self-contained demo loader/server, container `/health`, Helm chart, GoReleaser release workflow, tag `v0.1.3` publication with archives/deb/rpm/GHCR/SBOM, Prometheus incident/LLM/feedback/outbox metrics, and a GitHub Pages product page workflow are present; real SOC demo evidence, live-provider evidence, and production rollout gates remain.
 
 ## Reliability slice completed and verified on 2026-10-02
@@ -40,9 +40,12 @@
 - [ ] Verify and finish IRIS case/IOC/timeline/status, TheHive alert-to-case,
   Jira field templates, Telegram callback limits/Open links and native Slack
   callback payloads. Mock tests do not establish vendor API compatibility.
-- [ ] Complete browser-visible detail/feedback/suppression creation, fix detail
-  routing for slash-containing incident IDs and enforce web-write role checks;
-  add 24h/7d dashboard and LLM token consumption.
+- [x] Browser-visible detail/feedback/suppression creation, slash-containing
+  incident ID routing, browser authentication, CSRF protection, write-role
+  enforcement and 24h/7d incident dashboard. Automated and real browser checks
+  cover the completed flows; this does not establish full UI/TZ acceptance.
+- [ ] Finish alert timeline and enrichment presentation using the complete
+  normalized model; add persisted LLM token consumption to the dashboard.
 - [ ] Implement and test Pro PostgreSQL, OIDC and regulatory report templates;
   these are absent implementations, not credential-only acceptance.
 - [ ] Verify exact TZ coverage/performance/resource gates and full demo with
